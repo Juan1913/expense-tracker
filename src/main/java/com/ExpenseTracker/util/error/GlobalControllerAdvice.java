@@ -1,11 +1,13 @@
 package com.ExpenseTracker.util.error;
 
-
 import com.ExpenseTracker.util.exception.AlreadyExistsException;
 import com.ExpenseTracker.util.exception.InvalidDataException;
 import com.ExpenseTracker.util.exception.NotFoundException;
+import com.ExpenseTracker.util.exception.NotSaveException;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -63,6 +65,39 @@ public class GlobalControllerAdvice {
                 .detailMessages(result.getFieldErrors().stream()
                         .map(DefaultMessageSourceResolvable::getDefaultMessage)
                         .collect(Collectors.toList()))
+                .timeStamp(LocalDateTime.now())
+                .build();
+    }
+
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    @ExceptionHandler(NotSaveException.class)
+    public ErrorResponse handleNotSave(NotSaveException ex) {
+        return ErrorResponse.builder()
+                .code(ErrorCatalog.GENERIC_ERROR.getCode())
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .message(ex.getMessage())
+                .timeStamp(LocalDateTime.now())
+                .build();
+    }
+
+    @ResponseStatus(HttpStatus.UNAUTHORIZED)
+    @ExceptionHandler(AuthenticationException.class)
+    public ErrorResponse handleAuthentication(AuthenticationException ex) {
+        return ErrorResponse.builder()
+                .code(ErrorCatalog.USER_CREDENTIALS_INVALID.getCode())
+                .status(HttpStatus.UNAUTHORIZED)
+                .message(ErrorCatalog.USER_CREDENTIALS_INVALID.getMessage())
+                .timeStamp(LocalDateTime.now())
+                .build();
+    }
+
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    @ExceptionHandler(AccessDeniedException.class)
+    public ErrorResponse handleAccessDenied(AccessDeniedException ex) {
+        return ErrorResponse.builder()
+                .code(ErrorCatalog.ACCESS_DENIED.getCode())
+                .status(HttpStatus.FORBIDDEN)
+                .message(ErrorCatalog.ACCESS_DENIED.getMessage())
                 .timeStamp(LocalDateTime.now())
                 .build();
     }

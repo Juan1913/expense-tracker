@@ -24,13 +24,13 @@ public class CategoryEntity {
     private UUID id;
 
     @Column
-    private String Name;
-   
-    @Column             
-    private String Description;
+    private String name;
 
     @Column
-    private String Type;
+    private String description;
+
+    @Column
+    private String type;
 
 
     @Column(name = "created_at", nullable = false)

@@ -9,7 +9,6 @@ import lombok.*;
 import java.util.List;
 import java.util.UUID;
 
-
 @Getter
 @Setter
 @Builder
@@ -17,15 +16,12 @@ import java.util.UUID;
 @NoArgsConstructor
 @Entity
 @Table(name = "users")
-
-
 public class UserEntity {
 
     @Id
     @GeneratedValue
     @Column(columnDefinition = "uuid", updatable = false, nullable = false)
     private UUID id;
-
 
     @Column
     private String username;
@@ -39,6 +35,20 @@ public class UserEntity {
     @Column
     private String role;
 
+    @Column(precision = 19, scale = 2)
+    private java.math.BigDecimal monthlySavingsGoal;
+
+    @Column(name = "profile_image_url")
+    private String profileImageUrl;
+
+    // Default true so existing rows stay active after schema update
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean active = true;
+
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean emailVerified = true;
 
     @Column(name = "created_at", nullable = false)
     private java.time.LocalDateTime createdAt;
@@ -58,6 +68,4 @@ public class UserEntity {
 
     @OneToMany(mappedBy = "user", cascade = CascadeType.REMOVE, orphanRemoval = true)
     private List<TagEntity> tags;
-
-
 }
