@@ -1,9 +1,12 @@
 package com.ExpenseTracker.app.chat.persistence.entity;
 
 import com.ExpenseTracker.util.enums.ChatRole;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -15,7 +18,9 @@ import java.util.UUID;
 @NoArgsConstructor
 @Entity
 @Table(name = "chat_messages")
-public class ChatMessageEntity {
+@SQLDelete(sql = "UPDATE chat_messages SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class ChatMessageEntity extends SoftDeletableEntity {
 
     @Id
     @GeneratedValue

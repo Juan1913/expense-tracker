@@ -3,8 +3,11 @@ package com.ExpenseTracker.app.user.persistence.entity;
 import com.ExpenseTracker.app.account.persistence.entity.AccountEntity;
 import com.ExpenseTracker.app.category.persistence.entity.CategoryEntity;
 import com.ExpenseTracker.app.tag.persistence.entity.TagEntity;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.util.List;
 import java.util.UUID;
@@ -16,7 +19,9 @@ import java.util.UUID;
 @NoArgsConstructor
 @Entity
 @Table(name = "users")
-public class UserEntity {
+@SQLDelete(sql = "UPDATE users SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class UserEntity extends SoftDeletableEntity {
 
     @Id
     @GeneratedValue

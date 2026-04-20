@@ -3,11 +3,13 @@ package com.ExpenseTracker.app.budget.service;
 import com.ExpenseTracker.app.budget.mapper.BudgetMapper;
 import com.ExpenseTracker.app.budget.persistence.entity.BudgetEntity;
 import com.ExpenseTracker.app.budget.persistence.repository.BudgetEntityRepository;
+import com.ExpenseTracker.app.budget.presentation.dto.BudgetComparisonDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.BudgetDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.CreateBudgetDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.UpdateBudgetDTO;
 import com.ExpenseTracker.app.category.persistence.entity.CategoryEntity;
 import com.ExpenseTracker.app.category.persistence.repository.CategoryEntityRepository;
+import com.ExpenseTracker.app.transaction.persistence.repository.TransactionEntityRepository;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.UserEntityRepository;
 import com.ExpenseTracker.util.exception.AlreadyExistsException;
@@ -16,7 +18,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -26,6 +34,7 @@ public class BudgetServiceImpl implements IBudgetService {
 
     private final BudgetEntityRepository budgetRepository;
     private final CategoryEntityRepository categoryRepository;
+    private final TransactionEntityRepository transactionRepository;
     private final UserEntityRepository userRepository;
     private final BudgetMapper budgetMapper;
 
@@ -59,6 +68,44 @@ public class BudgetServiceImpl implements IBudgetService {
         }
         return budgetRepository.findByUser_IdOrderByYearDescMonthDesc(userId)
                 .stream().map(budgetMapper::toDTO).toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<BudgetComparisonDTO> findComparison(UUID userId, int month, int year) {
+        List<BudgetEntity> budgets = budgetRepository.findByUser_IdAndMonthAndYear(userId, month, year);
+
+        LocalDateTime start = LocalDate.of(year, month, 1).atStartOfDay();
+        LocalDateTime end   = start.plusMonths(1);
+        List<Object[]> rows = transactionRepository.findExpensesByCategoryAndPeriod(userId, start, end);
+
+        Map<UUID, BigDecimal> actualByCategory = new HashMap<>();
+        for (Object[] row : rows) {
+            actualByCategory.put((UUID) row[0], (BigDecimal) row[2]);
+        }
+
+        return budgets.stream().map(b -> {
+            UUID catId = b.getCategory().getId();
+            BigDecimal actual   = actualByCategory.getOrDefault(catId, BigDecimal.ZERO);
+            BigDecimal budgeted = b.getAmount();
+            BigDecimal pct = budgeted.compareTo(BigDecimal.ZERO) > 0
+                    ? actual.divide(budgeted, 4, RoundingMode.HALF_UP)
+                            .multiply(BigDecimal.valueOf(100))
+                            .setScale(2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+
+            return BudgetComparisonDTO.builder()
+                    .id(b.getId())
+                    .budgeted(budgeted)
+                    .actual(actual)
+                    .percentage(pct)
+                    .month(b.getMonth())
+                    .year(b.getYear())
+                    .categoryId(catId)
+                    .categoryName(b.getCategory().getName())
+                    .createdAt(b.getCreatedAt())
+                    .build();
+        }).toList();
     }
 
     @Override

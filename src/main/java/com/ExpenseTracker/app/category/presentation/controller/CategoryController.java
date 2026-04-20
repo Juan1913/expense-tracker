@@ -1,6 +1,7 @@
 package com.ExpenseTracker.app.category.presentation.controller;
 
 import com.ExpenseTracker.app.category.presentation.dto.CategoryDTO;
+import com.ExpenseTracker.app.category.presentation.dto.CategoryImpactDTO;
 import com.ExpenseTracker.app.category.presentation.dto.CreateCategoryDTO;
 import com.ExpenseTracker.app.category.presentation.dto.UpdateCategoryDTO;
 import com.ExpenseTracker.app.category.service.ICategoryService;
@@ -44,10 +45,22 @@ public class CategoryController {
         return ResponseEntity.ok(result);
     }
 
+    @GetMapping("/trash")
+    @Operation(summary = "Listar categorías en la papelera")
+    public ResponseEntity<List<CategoryDTO>> findTrash() {
+        return ResponseEntity.ok(categoryService.findTrashByUser(securityUtils.getCurrentUserId()));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Obtener categoría por ID")
     public ResponseEntity<CategoryDTO> findById(@PathVariable UUID id) {
         return ResponseEntity.ok(categoryService.findById(id, securityUtils.getCurrentUserId()));
+    }
+
+    @GetMapping("/{id}/impact")
+    @Operation(summary = "Vista previa de lo que se eliminará en cascada")
+    public ResponseEntity<CategoryImpactDTO> impact(@PathVariable UUID id) {
+        return ResponseEntity.ok(categoryService.impact(id, securityUtils.getCurrentUserId()));
     }
 
     @PutMapping("/{id}")
@@ -58,9 +71,22 @@ public class CategoryController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Eliminar categoría")
+    @Operation(summary = "Enviar categoría a la papelera (soft-delete con cascada)")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         categoryService.delete(id, securityUtils.getCurrentUserId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/restore")
+    @Operation(summary = "Restaurar categoría desde la papelera")
+    public ResponseEntity<CategoryDTO> restore(@PathVariable UUID id) {
+        return ResponseEntity.ok(categoryService.restore(id, securityUtils.getCurrentUserId()));
+    }
+
+    @DeleteMapping("/{id}/permanent")
+    @Operation(summary = "Eliminar categoría permanentemente (irreversible)")
+    public ResponseEntity<Void> deletePermanent(@PathVariable UUID id) {
+        categoryService.deletePermanent(id, securityUtils.getCurrentUserId());
         return ResponseEntity.noContent().build();
     }
 }

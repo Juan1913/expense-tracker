@@ -14,6 +14,8 @@ import java.util.UUID;
 public class AccountDTO {
     private UUID id;
     private String name;
+    private String bank;
+    private String cardNumber;
     private String description;
     private BigDecimal balance;
     private String currency;

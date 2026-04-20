@@ -18,6 +18,13 @@ public class CreateAccountDTO {
     @Size(max = 100, message = "El nombre no puede superar 100 caracteres")
     private String name;
 
+    @NotBlank(message = "El banco es obligatorio")
+    @Size(max = 60, message = "El banco no puede superar 60 caracteres")
+    private String bank;
+
+    @Size(max = 40, message = "El número de tarjeta no puede superar 40 caracteres")
+    private String cardNumber;
+
     @Size(max = 255, message = "La descripción no puede superar 255 caracteres")
     private String description;
 

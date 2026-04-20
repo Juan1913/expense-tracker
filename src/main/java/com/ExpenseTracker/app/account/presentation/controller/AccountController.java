@@ -1,6 +1,7 @@
 package com.ExpenseTracker.app.account.presentation.controller;
 
 import com.ExpenseTracker.app.account.presentation.dto.AccountDTO;
+import com.ExpenseTracker.app.account.presentation.dto.AccountImpactDTO;
 import com.ExpenseTracker.app.account.presentation.dto.CreateAccountDTO;
 import com.ExpenseTracker.app.account.presentation.dto.UpdateAccountDTO;
 import com.ExpenseTracker.app.account.service.IAccountService;
@@ -35,15 +36,32 @@ public class AccountController {
     }
 
     @GetMapping
-    @Operation(summary = "Listar cuentas del usuario autenticado")
-    public ResponseEntity<List<AccountDTO>> findAll() {
-        return ResponseEntity.ok(accountService.findAllByUser(securityUtils.getCurrentUserId()));
+    @Operation(summary = "Listar cuentas — filtros opcionales: search, currency, sortBy, sortDir")
+    public ResponseEntity<List<AccountDTO>> findAll(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String currency,
+            @RequestParam(required = false, defaultValue = "createdAt") String sortBy,
+            @RequestParam(required = false, defaultValue = "desc") String sortDir) {
+        return ResponseEntity.ok(accountService.findAllByUserFiltered(
+                securityUtils.getCurrentUserId(), search, currency, sortBy, sortDir));
+    }
+
+    @GetMapping("/trash")
+    @Operation(summary = "Listar cuentas en la papelera")
+    public ResponseEntity<List<AccountDTO>> findTrash() {
+        return ResponseEntity.ok(accountService.findTrashByUser(securityUtils.getCurrentUserId()));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "Obtener cuenta por ID")
     public ResponseEntity<AccountDTO> findById(@PathVariable UUID id) {
         return ResponseEntity.ok(accountService.findById(id, securityUtils.getCurrentUserId()));
+    }
+
+    @GetMapping("/{id}/impact")
+    @Operation(summary = "Vista previa de lo que se eliminará en cascada")
+    public ResponseEntity<AccountImpactDTO> impact(@PathVariable UUID id) {
+        return ResponseEntity.ok(accountService.impact(id, securityUtils.getCurrentUserId()));
     }
 
     @PutMapping("/{id}")
@@ -54,9 +72,22 @@ public class AccountController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Eliminar cuenta")
+    @Operation(summary = "Enviar cuenta a la papelera (soft-delete con cascada)")
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         accountService.delete(id, securityUtils.getCurrentUserId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/restore")
+    @Operation(summary = "Restaurar cuenta desde la papelera")
+    public ResponseEntity<AccountDTO> restore(@PathVariable UUID id) {
+        return ResponseEntity.ok(accountService.restore(id, securityUtils.getCurrentUserId()));
+    }
+
+    @DeleteMapping("/{id}/permanent")
+    @Operation(summary = "Eliminar cuenta permanentemente (irreversible, borra datos relacionados)")
+    public ResponseEntity<Void> deletePermanent(@PathVariable UUID id) {
+        accountService.deletePermanent(id, securityUtils.getCurrentUserId());
         return ResponseEntity.noContent().build();
     }
 }

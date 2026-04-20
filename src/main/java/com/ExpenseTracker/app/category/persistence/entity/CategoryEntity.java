@@ -2,10 +2,13 @@ package com.ExpenseTracker.app.category.persistence.entity;
 
 
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
-import java.util.List;
+
 import java.util.UUID;
 
 
@@ -16,7 +19,9 @@ import java.util.UUID;
 @AllArgsConstructor
 @Entity
 @Table(name = "categories")
-public class CategoryEntity {
+@SQLDelete(sql = "UPDATE categories SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class CategoryEntity extends SoftDeletableEntity {
 
     @Id
     @GeneratedValue

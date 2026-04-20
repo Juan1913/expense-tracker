@@ -2,8 +2,11 @@ package com.ExpenseTracker.app.budget.persistence.entity;
 
 import com.ExpenseTracker.app.category.persistence.entity.CategoryEntity;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -18,7 +21,9 @@ import java.util.UUID;
 @Table(name = "budgets", uniqueConstraints = {
         @UniqueConstraint(columnNames = {"user_id", "category_id", "month", "year"})
 })
-public class BudgetEntity {
+@SQLDelete(sql = "UPDATE budgets SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class BudgetEntity extends SoftDeletableEntity {
 
     @Id
     @GeneratedValue

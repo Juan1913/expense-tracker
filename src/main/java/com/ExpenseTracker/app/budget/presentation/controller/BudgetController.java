@@ -1,5 +1,6 @@
 package com.ExpenseTracker.app.budget.presentation.controller;
 
+import com.ExpenseTracker.app.budget.presentation.dto.BudgetComparisonDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.BudgetDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.CreateBudgetDTO;
 import com.ExpenseTracker.app.budget.presentation.dto.UpdateBudgetDTO;
@@ -40,6 +41,15 @@ public class BudgetController {
             @RequestParam(required = false) Integer month,
             @RequestParam(required = false) Integer year) {
         return ResponseEntity.ok(budgetService.findAllByUser(securityUtils.getCurrentUserId(), month, year));
+    }
+
+    @GetMapping("/comparison")
+    @Operation(summary = "Presupuestos con gasto real por categoría para un mes/año")
+    public ResponseEntity<List<BudgetComparisonDTO>> findComparison(
+            @RequestParam int month,
+            @RequestParam int year) {
+        return ResponseEntity.ok(
+                budgetService.findComparison(securityUtils.getCurrentUserId(), month, year));
     }
 
     @GetMapping("/{id}")

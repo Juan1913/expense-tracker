@@ -1,8 +1,11 @@
 package com.ExpenseTracker.app.transaction.persistence.entity;
 
 import com.ExpenseTracker.util.enums.TransactionType;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -14,7 +17,9 @@ import java.util.UUID;
 @AllArgsConstructor
 @Entity
 @Table(name = "transactions")
-public class TransactionEntity {
+@SQLDelete(sql = "UPDATE transactions SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class TransactionEntity extends SoftDeletableEntity {
     @Id
     @GeneratedValue
     @Column(columnDefinition = "uuid", updatable = false, nullable = false)

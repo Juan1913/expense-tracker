@@ -2,8 +2,11 @@ package com.ExpenseTracker.app.wishlist.persistence.entity;
 
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.util.enums.WishlistStatus;
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -17,7 +20,9 @@ import java.util.UUID;
 @AllArgsConstructor
 @Entity
 @Table(name = "wishlists")
-public class WishlistEntity {
+@SQLDelete(sql = "UPDATE wishlists SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class WishlistEntity extends SoftDeletableEntity {
 
     @Id
     @GeneratedValue

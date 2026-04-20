@@ -1,7 +1,10 @@
 package com.ExpenseTracker.app.transaction.persistence.entity;
 
+import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -15,7 +18,9 @@ import com.ExpenseTracker.util.enums.RecurringFrequency;
 @AllArgsConstructor
 @Entity
 @Table(name = "recurring_transactions")
-public class RecurringTransactionEntity {
+@SQLDelete(sql = "UPDATE recurring_transactions SET deleted = true WHERE id = ?")
+@SQLRestriction("deleted = false")
+public class RecurringTransactionEntity extends SoftDeletableEntity {
     @Id
     @GeneratedValue
     @Column(columnDefinition = "uuid", updatable = false, nullable = false)

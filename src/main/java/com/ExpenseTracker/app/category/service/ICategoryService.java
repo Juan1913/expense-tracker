@@ -1,6 +1,7 @@
 package com.ExpenseTracker.app.category.service;
 
 import com.ExpenseTracker.app.category.presentation.dto.CategoryDTO;
+import com.ExpenseTracker.app.category.presentation.dto.CategoryImpactDTO;
 import com.ExpenseTracker.app.category.presentation.dto.CreateCategoryDTO;
 import com.ExpenseTracker.app.category.presentation.dto.UpdateCategoryDTO;
 
@@ -20,4 +21,12 @@ public interface ICategoryService {
     CategoryDTO update(UUID id, UpdateCategoryDTO dto, UUID userId);
 
     void delete(UUID id, UUID userId);
+
+    CategoryImpactDTO impact(UUID id, UUID userId);
+
+    List<CategoryDTO> findTrashByUser(UUID userId);
+
+    CategoryDTO restore(UUID id, UUID userId);
+
+    void deletePermanent(UUID id, UUID userId);
 }

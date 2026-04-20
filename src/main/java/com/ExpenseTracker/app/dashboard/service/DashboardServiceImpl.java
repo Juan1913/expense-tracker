@@ -41,6 +41,7 @@ public class DashboardServiceImpl implements IDashboardService {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime sixMonthsAgo = now.minusMonths(6).withDayOfMonth(1)
                 .withHour(0).withMinute(0).withSecond(0).withNano(0);
+        LocalDateTime endOfToday = now.toLocalDate().plusDays(1).atStartOfDay();
         LocalDateTime monthStart = now.withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0).withNano(0);
         LocalDateTime monthEnd = monthStart.plusMonths(1);
 
@@ -56,7 +57,7 @@ public class DashboardServiceImpl implements IDashboardService {
                 dashboardExecutor);
 
         CompletableFuture<List<TransactionEntity>> monthlyFuture = CompletableFuture.supplyAsync(
-                () -> transactionRepository.findByUser_IdAndDateBetweenOrderByDateAsc(userId, sixMonthsAgo, now),
+                () -> transactionRepository.findByUser_IdAndDateBetweenOrderByDateAsc(userId, sixMonthsAgo, endOfToday),
                 dashboardExecutor);
 
         CompletableFuture<List<Object[]>> categoryFuture = CompletableFuture.supplyAsync(

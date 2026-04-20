@@ -4,6 +4,8 @@ import com.ExpenseTracker.util.exception.AlreadyExistsException;
 import com.ExpenseTracker.util.exception.InvalidDataException;
 import com.ExpenseTracker.util.exception.NotFoundException;
 import com.ExpenseTracker.util.exception.NotSaveException;
+import org.springframework.ai.retry.NonTransientAiException;
+import org.springframework.ai.retry.TransientAiException;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
@@ -98,6 +100,30 @@ public class GlobalControllerAdvice {
                 .code(ErrorCatalog.ACCESS_DENIED.getCode())
                 .status(HttpStatus.FORBIDDEN)
                 .message(ErrorCatalog.ACCESS_DENIED.getMessage())
+                .timeStamp(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * AI provider returned a non-retryable error (most commonly 429 quota exceeded,
+     * 401 invalid key, 403 billing). We surface a friendly message instead of a 500.
+     */
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    @ExceptionHandler({ NonTransientAiException.class, TransientAiException.class })
+    public ErrorResponse handleAiProviderError(Exception ex) {
+        String raw = ex.getMessage() == null ? "" : ex.getMessage();
+        String friendly;
+        if (raw.contains("429") || raw.contains("RESOURCE_EXHAUSTED") || raw.contains("quota")) {
+            friendly = "El asistente IA alcanzó su límite de uso. Intenta de nuevo en unos minutos.";
+        } else if (raw.contains("401") || raw.contains("403") || raw.contains("API key")) {
+            friendly = "El asistente IA no está configurado correctamente (API key inválida o sin permisos).";
+        } else {
+            friendly = "El asistente IA no está disponible en este momento.";
+        }
+        return ErrorResponse.builder()
+                .code(ErrorCatalog.GENERIC_ERROR.getCode())
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .message(friendly)
                 .timeStamp(LocalDateTime.now())
                 .build();
     }
