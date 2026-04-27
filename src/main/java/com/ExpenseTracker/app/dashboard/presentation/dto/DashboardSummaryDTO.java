@@ -15,7 +15,11 @@ public class DashboardSummaryDTO {
     private long totalTransactions;
     private BigDecimal totalIncome;
     private BigDecimal totalExpenses;
+    /** Σ(income) − Σ(expense) histórico, ignora TRANSFER. */
     private BigDecimal totalSavings;
+    private BigDecimal totalNetWorth;
+    private BigDecimal totalInSavingsAccounts;
+    private BigDecimal totalOperational;
     private List<MonthlySummaryDTO> monthlySummaries;
     private List<CategoryExpenseDTO> expensesByCategory;
     private List<BudgetComparisonDTO> budgetComparisons;

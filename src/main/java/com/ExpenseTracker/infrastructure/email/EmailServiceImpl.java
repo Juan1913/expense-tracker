@@ -27,7 +27,22 @@ public class EmailServiceImpl implements EmailService {
     @Override
     public void sendVerificationEmail(String to, String token, String frontendUrl) {
         String link = frontendUrl + "/verify?token=" + token;
-        log.info("Enviando correo de verificación a: {}", to);
+        sendHtml(to, "Activa tu cuenta en FINZ",
+                buildVerificationHtml(link),
+                "verificación");
+    }
+
+    @Async
+    @Override
+    public void sendPasswordResetEmail(String to, String token, String frontendUrl) {
+        String link = frontendUrl + "/reset-password?token=" + token;
+        sendHtml(to, "Restablece tu contraseña en FINZ",
+                buildResetPasswordHtml(link),
+                "recuperación");
+    }
+
+    private void sendHtml(String to, String subject, String html, String kind) {
+        log.info("Enviando correo de {} a: {}", kind, to);
 
         Properties props = new Properties();
         props.put("mail.smtp.auth", "true");
@@ -45,8 +60,8 @@ public class EmailServiceImpl implements EmailService {
             Message message = new MimeMessage(session);
             message.setFrom(new InternetAddress(username));
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(to));
-            message.setSubject("Activa tu cuenta en FINZ");
-            message.setContent(buildHtml(link), "text/html; charset=utf-8");
+            message.setSubject(subject);
+            message.setContent(html, "text/html; charset=utf-8");
             Transport.send(message);
             log.info("Correo enviado exitosamente a: {}", to);
         } catch (Exception e) {
@@ -55,7 +70,7 @@ public class EmailServiceImpl implements EmailService {
         }
     }
 
-    private String buildHtml(String link) {
+    private String buildVerificationHtml(String link) {
         return """
             <!DOCTYPE html>
             <html>
@@ -78,6 +93,38 @@ public class EmailServiceImpl implements EmailService {
                   </a>
                   <p style="color:#6b7280;font-size:12px;margin:24px 0 0;text-align:center">
                     El enlace expira en 24 horas. Si no esperabas este correo, ignóralo.
+                  </p>
+                </div>
+              </div>
+            </body>
+            </html>
+            """.formatted(link);
+    }
+
+    private String buildResetPasswordHtml(String link) {
+        return """
+            <!DOCTYPE html>
+            <html>
+            <body style="margin:0;padding:0;background-color:#000000;font-family:'Segoe UI',sans-serif">
+              <div style="max-width:520px;margin:40px auto;background:#151515;border-radius:16px;overflow:hidden">
+                <div style="background:linear-gradient(135deg,#f59e0b,#ef4444);padding:32px;text-align:center">
+                  <span style="font-size:28px;font-weight:700;color:#fff;letter-spacing:-1px">⚡ FINZ</span>
+                </div>
+                <div style="padding:40px 32px">
+                  <h2 style="color:#ffffff;font-size:22px;margin:0 0 12px">Restablecer contraseña</h2>
+                  <p style="color:#9ca3af;font-size:15px;line-height:1.6;margin:0 0 32px">
+                    Recibimos una solicitud para cambiar tu contraseña.<br>
+                    Haz clic en el botón para elegir una nueva.
+                  </p>
+                  <a href="%s"
+                     style="display:block;text-align:center;background:linear-gradient(135deg,#f59e0b,#ef4444);
+                            color:#fff;text-decoration:none;padding:16px 32px;border-radius:12px;
+                            font-size:15px;font-weight:600">
+                    Cambiar contraseña
+                  </a>
+                  <p style="color:#6b7280;font-size:12px;margin:24px 0 0;text-align:center">
+                    El enlace expira en 1 hora. Si no solicitaste este cambio, ignora este correo —
+                    tu contraseña no se modificará.
                   </p>
                 </div>
               </div>

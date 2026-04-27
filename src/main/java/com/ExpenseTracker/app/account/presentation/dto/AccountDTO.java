@@ -19,5 +19,6 @@ public class AccountDTO {
     private String description;
     private BigDecimal balance;
     private String currency;
+    private boolean savings;
     private LocalDateTime createdAt;
 }

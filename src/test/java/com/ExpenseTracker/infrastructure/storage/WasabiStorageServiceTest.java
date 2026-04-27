@@ -14,33 +14,34 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class WasabiStorageServiceTest {
 
     @Mock private S3Client s3Client;
+    @Mock private S3Presigner s3Presigner;
     @Mock private MultipartFile file;
 
     private WasabiStorageService service;
 
-    private static final String ENDPOINT = "https://s3.us-east-1.wasabisys.com";
     private static final String BUCKET = "finz-bucket";
 
     @BeforeEach
     void setUp() {
-        service = new WasabiStorageService(s3Client);
+        service = new WasabiStorageService(s3Client, s3Presigner);
         ReflectionTestUtils.setField(service, "bucket", BUCKET);
-        ReflectionTestUtils.setField(service, "endpoint", ENDPOINT);
     }
 
-    // ── upload ──────────────────────────────────────────────────────────────────
-
     @Test
-    void upload_returnsUrlWithCorrectStructure() throws Exception {
+    void upload_returnsKeyUnderRequestedFolder() throws Exception {
         when(file.getOriginalFilename()).thenReturn("photo.jpg");
         when(file.getContentType()).thenReturn("image/jpeg");
         when(file.getSize()).thenReturn(2048L);
@@ -48,10 +49,10 @@ class WasabiStorageServiceTest {
         when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .thenReturn(PutObjectResponse.builder().build());
 
-        String url = service.upload(file, "avatars");
+        String key = service.upload(file, "avatars");
 
-        assertThat(url).startsWith(ENDPOINT + "/" + BUCKET + "/avatars/");
-        assertThat(url).endsWith(".jpg");
+        assertThat(key).startsWith("avatars/");
+        assertThat(key).endsWith(".jpg");
     }
 
     @Test
@@ -84,9 +85,9 @@ class WasabiStorageServiceTest {
         when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .thenReturn(PutObjectResponse.builder().build());
 
-        String url = service.upload(file, "misc");
+        String key = service.upload(file, "misc");
 
-        assertThat(url).endsWith(".bin");
+        assertThat(key).endsWith(".bin");
     }
 
     @Test
@@ -103,15 +104,24 @@ class WasabiStorageServiceTest {
                 .hasMessageContaining("Error al subir el archivo");
     }
 
-    // ── delete ──────────────────────────────────────────────────────────────────
+    @Test
+    void presignedUrl_passThroughForLegacyHttpsValues() {
+        String legacy = "https://s3.us-east-1.wasabisys.com/finz-bucket/avatars/x.jpg";
+        assertThat(service.presignedUrl(legacy)).isEqualTo(legacy);
+    }
 
     @Test
-    void delete_extractsKeyCorrectlyAndCallsDeleteObject() {
-        String url = ENDPOINT + "/" + BUCKET + "/avatars/some-uuid.jpg";
+    void presignedUrl_returnsNullForBlankInput() {
+        assertThat(service.presignedUrl(null)).isNull();
+        assertThat(service.presignedUrl("")).isNull();
+    }
+
+    @Test
+    void delete_callsDeleteObjectWithKey() {
         when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
                 .thenReturn(DeleteObjectResponse.builder().build());
 
-        service.delete(url);
+        service.delete("avatars/some-uuid.jpg");
 
         ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
         verify(s3Client).deleteObject(captor.capture());
@@ -122,11 +132,23 @@ class WasabiStorageServiceTest {
     }
 
     @Test
+    void delete_extractsKeyFromLegacyFullUrl() {
+        when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
+                .thenReturn(DeleteObjectResponse.builder().build());
+
+        String legacyUrl = "https://s3.wasabisys.com/" + BUCKET + "/avatars/file.jpg";
+        service.delete(legacyUrl);
+
+        ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client).deleteObject(captor.capture());
+        assertThat(captor.getValue().key()).isEqualTo("avatars/file.jpg");
+    }
+
+    @Test
     void delete_whenS3Throws_doesNotPropagateException() {
-        String url = ENDPOINT + "/" + BUCKET + "/avatars/file.jpg";
         when(s3Client.deleteObject(any(DeleteObjectRequest.class)))
                 .thenThrow(new RuntimeException("S3 error"));
 
-        assertThatCode(() -> service.delete(url)).doesNotThrowAnyException();
+        assertThatCode(() -> service.delete("avatars/file.jpg")).doesNotThrowAnyException();
     }
 }

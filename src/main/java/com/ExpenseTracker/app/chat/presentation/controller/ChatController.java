@@ -3,6 +3,8 @@ package com.ExpenseTracker.app.chat.presentation.controller;
 import com.ExpenseTracker.app.chat.presentation.dto.ChatRequestDTO;
 import com.ExpenseTracker.app.chat.presentation.dto.ChatResponseDTO;
 import com.ExpenseTracker.app.chat.presentation.dto.ConversationDTO;
+import com.ExpenseTracker.app.chat.presentation.dto.PendingActionDTO;
+import com.ExpenseTracker.app.chat.service.IChatActionService;
 import com.ExpenseTracker.app.chat.service.IChatService;
 import com.ExpenseTracker.infrastructure.ai.rag.FinancialIndexingService;
 import com.ExpenseTracker.infrastructure.security.SecurityUtils;
@@ -26,6 +28,7 @@ import java.util.UUID;
 public class ChatController {
 
     private final IChatService chatService;
+    private final IChatActionService chatActionService;
     private final FinancialIndexingService indexingService;
     private final SecurityUtils securityUtils;
 
@@ -76,5 +79,19 @@ public class ChatController {
         UUID userId = securityUtils.getCurrentUserId();
         indexingService.reindexUser(userId);
         return ResponseEntity.accepted().build();
+    }
+
+    @PostMapping("/actions/{actionId}/confirm")
+    @Operation(summary = "Confirmar y ejecutar una acción propuesta por FinBot")
+    public ResponseEntity<PendingActionDTO> confirmAction(@PathVariable UUID actionId) {
+        UUID userId = securityUtils.getCurrentUserId();
+        return ResponseEntity.ok(chatActionService.confirm(actionId, userId));
+    }
+
+    @PostMapping("/actions/{actionId}/reject")
+    @Operation(summary = "Cancelar una acción propuesta por FinBot")
+    public ResponseEntity<PendingActionDTO> rejectAction(@PathVariable UUID actionId) {
+        UUID userId = securityUtils.getCurrentUserId();
+        return ResponseEntity.ok(chatActionService.reject(actionId, userId));
     }
 }

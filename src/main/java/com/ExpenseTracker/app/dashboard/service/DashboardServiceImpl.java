@@ -1,5 +1,7 @@
 package com.ExpenseTracker.app.dashboard.service;
 
+import com.ExpenseTracker.app.account.persistence.entity.AccountEntity;
+import com.ExpenseTracker.app.account.persistence.repository.AccountEntityRepository;
 import com.ExpenseTracker.app.budget.persistence.entity.BudgetEntity;
 import com.ExpenseTracker.app.budget.persistence.repository.BudgetEntityRepository;
 import com.ExpenseTracker.app.dashboard.presentation.dto.*;
@@ -32,6 +34,7 @@ public class DashboardServiceImpl implements IDashboardService {
     private final TransactionEntityRepository transactionRepository;
     private final BudgetEntityRepository budgetRepository;
     private final UserEntityRepository userRepository;
+    private final AccountEntityRepository accountRepository;
 
     @Qualifier("dashboardExecutor")
     private final Executor dashboardExecutor;
@@ -76,12 +79,27 @@ public class DashboardServiceImpl implements IDashboardService {
                         .orElseThrow(() -> new NotFoundException("Usuario no encontrado")),
                 dashboardExecutor);
 
+        CompletableFuture<List<AccountEntity>> accountsFuture = CompletableFuture.supplyAsync(
+                () -> accountRepository.findByUser_Id(userId), dashboardExecutor);
+
         CompletableFuture.allOf(countFuture, incomeFuture, expenseFuture,
-                monthlyFuture, categoryFuture, budgetFuture, currentMonthCategoryFuture, userFuture).join();
+                monthlyFuture, categoryFuture, budgetFuture, currentMonthCategoryFuture,
+                userFuture, accountsFuture).join();
 
         BigDecimal totalIncome = incomeFuture.join();
         BigDecimal totalExpenses = expenseFuture.join();
         BigDecimal totalSavings = totalIncome.subtract(totalExpenses);
+
+        // Patrimonio neto = Σ saldos de cuentas activas; separado por flag isSavings.
+        List<AccountEntity> accounts = accountsFuture.join();
+        BigDecimal totalInSavings = BigDecimal.ZERO;
+        BigDecimal totalOperational = BigDecimal.ZERO;
+        for (AccountEntity a : accounts) {
+            BigDecimal bal = a.getBalance() == null ? BigDecimal.ZERO : a.getBalance();
+            if (a.isSavings()) totalInSavings = totalInSavings.add(bal);
+            else               totalOperational = totalOperational.add(bal);
+        }
+        BigDecimal totalNetWorth = totalOperational.add(totalInSavings);
 
         List<TransactionEntity> transactions = monthlyFuture.join();
 
@@ -90,6 +108,9 @@ public class DashboardServiceImpl implements IDashboardService {
                 .totalIncome(totalIncome)
                 .totalExpenses(totalExpenses)
                 .totalSavings(totalSavings)
+                .totalNetWorth(totalNetWorth)
+                .totalInSavingsAccounts(totalInSavings)
+                .totalOperational(totalOperational)
                 .monthlySummaries(buildMonthlySummaries(transactions))
                 .expensesByCategory(buildCategoryExpenses(categoryFuture.join(), totalExpenses))
                 .budgetComparisons(buildBudgetComparisons(budgetFuture.join(), currentMonthCategoryFuture.join()))
@@ -100,6 +121,8 @@ public class DashboardServiceImpl implements IDashboardService {
     private List<MonthlySummaryDTO> buildMonthlySummaries(List<TransactionEntity> transactions) {
         Map<String, BigDecimal[]> monthMap = new LinkedHashMap<>();
         for (TransactionEntity t : transactions) {
+            // TRANSFER no es ni ingreso ni gasto: lo saltamos.
+            if (t.getType() == TransactionType.TRANSFER) continue;
             String key = t.getDate().getYear() + "-" + t.getDate().getMonthValue();
             monthMap.computeIfAbsent(key, k -> new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
             BigDecimal[] totals = monthMap.get(key);
@@ -163,6 +186,7 @@ public class DashboardServiceImpl implements IDashboardService {
         BigDecimal goal = user.getMonthlySavingsGoal();
         Map<String, BigDecimal[]> monthMap = new LinkedHashMap<>();
         for (TransactionEntity t : transactions) {
+            if (t.getType() == TransactionType.TRANSFER) continue;
             String key = t.getDate().getYear() + "-" + t.getDate().getMonthValue();
             monthMap.computeIfAbsent(key, k -> new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
             BigDecimal[] totals = monthMap.get(key);

@@ -20,6 +20,8 @@ public class TransactionDTO {
     private TransactionType type;
     private UUID accountId;
     private String accountName;
+    private UUID transferToAccountId;
+    private String transferToAccountName;
     private UUID categoryId;
     private String categoryName;
     private UUID userId;

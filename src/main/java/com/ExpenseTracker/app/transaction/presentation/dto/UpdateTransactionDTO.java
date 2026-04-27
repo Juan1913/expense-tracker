@@ -28,5 +28,7 @@ public class UpdateTransactionDTO {
 
     private UUID accountId;
 
+    private UUID transferToAccountId;
+
     private UUID categoryId;
 }

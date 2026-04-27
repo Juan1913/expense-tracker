@@ -19,6 +19,4 @@ public class SetupProfileDTO {
     @NotBlank(message = "La contraseña es requerida")
     @Size(min = 6, message = "La contraseña debe tener al menos 6 caracteres")
     private String password;
-
-    private String profileImageUrl;
 }

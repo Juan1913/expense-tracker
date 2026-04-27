@@ -13,6 +13,8 @@ public interface TransactionMapper {
 
     @Mapping(source = "account.id", target = "accountId")
     @Mapping(source = "account.name", target = "accountName")
+    @Mapping(source = "transferToAccount.id", target = "transferToAccountId")
+    @Mapping(source = "transferToAccount.name", target = "transferToAccountName")
     @Mapping(source = "category.id", target = "categoryId")
     @Mapping(source = "category.name", target = "categoryName")
     @Mapping(source = "user.id", target = "userId")
@@ -22,6 +24,7 @@ public interface TransactionMapper {
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "user", ignore = true)
     @Mapping(target = "account", ignore = true)
+    @Mapping(target = "transferToAccount", ignore = true)
     @Mapping(target = "category", ignore = true)
     TransactionEntity toEntity(CreateTransactionDTO dto);
 }

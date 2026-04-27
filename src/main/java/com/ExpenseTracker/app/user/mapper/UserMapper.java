@@ -20,7 +20,6 @@ public interface UserMapper {
     @Mapping(target = "categories", ignore = true)
     @Mapping(target = "accounts", ignore = true)
     @Mapping(target = "tags", ignore = true)
-    @Mapping(target = "profileImageUrl", ignore = true)
     @Mapping(target = "role", constant = "USER")
     @Mapping(target = "active", constant = "true")
     @Mapping(target = "emailVerified", constant = "true")

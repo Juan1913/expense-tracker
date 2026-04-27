@@ -4,6 +4,7 @@ import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.util.persistence.SoftDeletableEntity;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.SQLDelete;
 import org.hibernate.annotations.SQLRestriction;
 
@@ -44,6 +45,10 @@ public class AccountEntity extends SoftDeletableEntity {
 
     @Column(length = 10)
     private String currency;
+
+    @Column(name = "is_savings", nullable = false)
+    @ColumnDefault("false")
+    private boolean savings;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

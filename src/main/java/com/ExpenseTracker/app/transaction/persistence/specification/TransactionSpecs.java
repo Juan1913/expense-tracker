@@ -2,6 +2,7 @@ package com.ExpenseTracker.app.transaction.persistence.specification;
 
 import com.ExpenseTracker.app.transaction.persistence.entity.TransactionEntity;
 import com.ExpenseTracker.util.enums.TransactionType;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -37,9 +38,11 @@ public final class TransactionSpecs {
     }
 
     public static Specification<TransactionEntity> fromCategory(UUID categoryId) {
-        return (root, q, cb) -> categoryId == null
-                ? cb.conjunction()
-                : cb.equal(root.get("category").get("id"), categoryId);
+        return (root, q, cb) -> {
+            if (categoryId == null) return cb.conjunction();
+            // LEFT JOIN porque category es nullable (TRANSFER).
+            return cb.equal(root.join("category", JoinType.LEFT).get("id"), categoryId);
+        };
     }
 
     public static Specification<TransactionEntity> dateFrom(LocalDateTime from) {
@@ -71,10 +74,13 @@ public final class TransactionSpecs {
         return (root, q, cb) -> {
             if (search == null || search.isBlank()) return cb.conjunction();
             String pattern = "%" + search.trim().toLowerCase() + "%";
+            // LEFT JOIN para category porque es nullable (TRANSFER no tiene categoría).
             Predicate desc = cb.like(
                     cb.lower(cb.coalesce(root.<String>get("description"), "")), pattern);
-            Predicate cat  = cb.like(cb.lower(root.get("category").<String>get("name")), pattern);
-            Predicate acct = cb.like(cb.lower(root.get("account").<String>get("name")),  pattern);
+            Predicate cat  = cb.like(
+                    cb.lower(cb.coalesce(root.join("category", JoinType.LEFT).<String>get("name"), "")),
+                    pattern);
+            Predicate acct = cb.like(cb.lower(root.get("account").<String>get("name")), pattern);
             return cb.or(desc, cat, acct);
         };
     }

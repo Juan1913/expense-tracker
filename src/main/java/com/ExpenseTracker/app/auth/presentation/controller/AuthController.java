@@ -1,42 +1,58 @@
 package com.ExpenseTracker.app.auth.presentation.controller;
 
+import com.ExpenseTracker.app.auth.presentation.dto.ForgotPasswordDTO;
 import com.ExpenseTracker.app.auth.presentation.dto.LoginRequestDTO;
 import com.ExpenseTracker.app.auth.presentation.dto.LoginResponseDTO;
+import com.ExpenseTracker.app.auth.presentation.dto.ResetPasswordDTO;
 import com.ExpenseTracker.app.auth.presentation.dto.SetupProfileDTO;
 import com.ExpenseTracker.app.user.persistence.entity.EmailVerificationToken;
+import com.ExpenseTracker.app.user.persistence.entity.PasswordResetToken;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.EmailVerificationTokenRepository;
+import com.ExpenseTracker.app.user.persistence.repository.PasswordResetTokenRepository;
 import com.ExpenseTracker.app.user.persistence.repository.UserEntityRepository;
 import com.ExpenseTracker.app.user.presentation.dto.CreateUserDTO;
 import com.ExpenseTracker.app.user.presentation.dto.UserDTO;
 import com.ExpenseTracker.app.user.service.IUserService;
+import com.ExpenseTracker.infrastructure.email.EmailService;
 import com.ExpenseTracker.infrastructure.security.JwtService;
 import com.ExpenseTracker.util.exception.NotFoundException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "Auth", description = "Registro e inicio de sesión")
 public class AuthController {
 
     private final IUserService userService;
     private final UserEntityRepository userRepository;
     private final EmailVerificationTokenRepository tokenRepository;
+    private final PasswordResetTokenRepository resetTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final EmailService emailService;
+
+    @Value("${app.frontend.url}")
+    private String frontendUrl;
 
     @PostMapping("/register")
     @Operation(summary = "Registrar nuevo usuario")
@@ -66,12 +82,12 @@ public class AuthController {
                 .email(user.getEmail())
                 .username(user.getUsername())
                 .role(user.getRole())
-                .profileImageUrl(user.getProfileImageUrl())
                 .build());
     }
 
     @GetMapping("/verify")
     @Operation(summary = "Verificar token de invitación por email")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, String>> verifyEmail(@RequestParam String token) {
         EmailVerificationToken verificationToken = tokenRepository.findByTokenAndUsedFalse(token)
                 .orElseThrow(() -> new NotFoundException("Token inválido o ya utilizado"));
@@ -91,6 +107,7 @@ public class AuthController {
 
     @PostMapping("/setup-profile")
     @Operation(summary = "Configurar perfil tras verificar email")
+    @Transactional
     public ResponseEntity<LoginResponseDTO> setupProfile(@Valid @RequestBody SetupProfileDTO dto) {
         if (jwtService.isTokenExpired(dto.getSetupToken())) {
             throw new BadCredentialsException("El token de configuración ha expirado");
@@ -112,9 +129,6 @@ public class AuthController {
 
         user.setUsername(dto.getUsername());
         user.setPassword(passwordEncoder.encode(dto.getPassword()));
-        if (dto.getProfileImageUrl() != null && !dto.getProfileImageUrl().isBlank()) {
-            user.setProfileImageUrl(dto.getProfileImageUrl());
-        }
         user.setActive(true);
         user.setEmailVerified(true);
         userRepository.save(user);
@@ -127,7 +141,53 @@ public class AuthController {
                 .email(user.getEmail())
                 .username(user.getUsername())
                 .role(user.getRole())
-                .profileImageUrl(user.getProfileImageUrl())
                 .build());
+    }
+
+    @PostMapping("/forgot-password")
+    @Operation(summary = "Solicitar correo de recuperación de contraseña")
+    @Transactional
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordDTO dto) {
+        // Respuesta genérica para no filtrar si el correo existe o no.
+        Optional<UserEntity> maybeUser = userRepository.findByEmail(dto.getEmail());
+        maybeUser.ifPresent(user -> {
+            String rawToken = UUID.randomUUID().toString();
+            PasswordResetToken token = PasswordResetToken.builder()
+                    .token(rawToken)
+                    .user(user)
+                    .expiresAt(LocalDateTime.now().plusHours(1))
+                    .build();
+            resetTokenRepository.save(token);
+            try {
+                emailService.sendPasswordResetEmail(user.getEmail(), rawToken, frontendUrl);
+            } catch (Exception e) {
+                log.error("Error enviando correo de recuperación a {}: {}", user.getEmail(), e.getMessage(), e);
+            }
+        });
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña."
+        ));
+    }
+
+    @PostMapping("/reset-password")
+    @Operation(summary = "Restablecer contraseña con token recibido por correo")
+    @Transactional
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordDTO dto) {
+        PasswordResetToken token = resetTokenRepository.findByTokenAndUsedFalse(dto.getToken())
+                .orElseThrow(() -> new BadCredentialsException("Token inválido o ya utilizado"));
+
+        if (token.isExpired()) {
+            throw new BadCredentialsException("El enlace de recuperación ha expirado");
+        }
+
+        UserEntity user = token.getUser();
+        user.setPassword(passwordEncoder.encode(dto.getPassword()));
+        userRepository.save(user);
+
+        token.setUsed(true);
+        resetTokenRepository.save(token);
+
+        return ResponseEntity.ok(Map.of("message", "Contraseña actualizada correctamente"));
     }
 }

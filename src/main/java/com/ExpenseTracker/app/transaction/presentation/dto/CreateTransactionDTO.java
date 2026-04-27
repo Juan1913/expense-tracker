@@ -33,6 +33,7 @@ public class CreateTransactionDTO {
     @NotNull(message = "La cuenta es obligatoria")
     private UUID accountId;
 
-    @NotNull(message = "La categoría es obligatoria")
+    private UUID transferToAccountId;
+
     private UUID categoryId;
 }

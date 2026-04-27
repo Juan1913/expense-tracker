@@ -3,6 +3,7 @@ package com.ExpenseTracker.app.chat.presentation.dto;
 import com.ExpenseTracker.util.enums.ChatRole;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record ChatResponseDTO(
@@ -10,5 +11,6 @@ public record ChatResponseDTO(
         UUID conversationId,
         ChatRole role,
         String content,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        List<PendingActionDTO> pendingActions
 ) {}

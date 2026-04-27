@@ -2,29 +2,35 @@ package com.ExpenseTracker.app.chat.service;
 
 import com.ExpenseTracker.app.chat.persistence.entity.ChatConversationEntity;
 import com.ExpenseTracker.app.chat.persistence.entity.ChatMessageEntity;
+import com.ExpenseTracker.app.chat.persistence.entity.PendingChatActionEntity;
 import com.ExpenseTracker.app.chat.persistence.repository.ChatConversationEntityRepository;
 import com.ExpenseTracker.app.chat.persistence.repository.ChatMessageEntityRepository;
+import com.ExpenseTracker.app.chat.persistence.repository.PendingChatActionRepository;
 import com.ExpenseTracker.app.chat.presentation.dto.ChatRequestDTO;
 import com.ExpenseTracker.app.chat.presentation.dto.ChatResponseDTO;
 import com.ExpenseTracker.app.chat.presentation.dto.ConversationDTO;
+import com.ExpenseTracker.app.chat.presentation.dto.PendingActionDTO;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.UserEntityRepository;
-import com.ExpenseTracker.infrastructure.ai.rag.FinancialIndexingService;
+import com.ExpenseTracker.infrastructure.ai.memory.ChatMemoryService;
+import com.ExpenseTracker.infrastructure.ai.tools.FinBotTools;
+import com.ExpenseTracker.infrastructure.ai.tools.PendingActionCollector;
 import com.ExpenseTracker.util.enums.ChatRole;
 import com.ExpenseTracker.util.exception.NotFoundException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -35,21 +41,21 @@ import java.util.stream.Collectors;
 public class ChatServiceImpl implements IChatService {
 
     private final ChatClient chatClient;
-    private final VectorStore vectorStore;
-    private final FinancialIndexingService indexingService;
+    private final FinBotTools finBotTools;
+    private final ChatMemoryService chatMemoryService;
+    private final PendingActionCollector actionCollector;
     private final ChatConversationEntityRepository conversationRepository;
     private final ChatMessageEntityRepository messageRepository;
+    private final PendingChatActionRepository pendingActionRepository;
     private final UserEntityRepository userRepository;
+    private final ObjectMapper objectMapper;
 
     private static final int MAX_HISTORY_MESSAGES = 20;
-    private static final int RAG_TOP_K = 8;
 
     @Override
     public ConversationDTO createConversation(UUID userId, String firstMessage) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
-
-        indexingService.reindexUser(userId);
 
         String title = firstMessage.length() > 60
                 ? firstMessage.substring(0, 57) + "..."
@@ -61,8 +67,7 @@ public class ChatServiceImpl implements IChatService {
                 .build();
         conversation = conversationRepository.save(conversation);
 
-        ChatResponseDTO assistantResponse = sendMessage(userId, conversation.getId(),
-                new ChatRequestDTO(firstMessage));
+        sendMessage(userId, conversation.getId(), new ChatRequestDTO(firstMessage));
 
         return getConversation(userId, conversation.getId());
     }
@@ -80,17 +85,26 @@ public class ChatServiceImpl implements IChatService {
                 .build();
         messageRepository.save(userMsg);
 
-        String context = retrieveFinancialContext(userId, request.message());
+        UUID currentUserId = conversation.getUser().getId();
+        String memory = chatMemoryService.retrieveRelevantMemory(currentUserId, conversationId, request.message());
         List<Message> history = buildHistory(conversationId, userMsg.getId());
 
-        String systemPrompt = buildSystemPrompt(context);
+        String systemPrompt = buildSystemPrompt(memory);
 
-        String aiResponse = chatClient.prompt()
-                .system(systemPrompt)
-                .messages(history)
-                .user(request.message())
-                .call()
-                .content();
+        actionCollector.start();
+        String aiResponse;
+        try {
+            aiResponse = chatClient.prompt()
+                    .system(systemPrompt)
+                    .tools(finBotTools)
+                    .messages(history)
+                    .user(request.message())
+                    .call()
+                    .content();
+        } finally {
+            // garantizamos drain incluso si tira excepción.
+        }
+        List<PendingActionCollector.Pending> proposed = actionCollector.drain();
 
         ChatMessageEntity assistantMsg = ChatMessageEntity.builder()
                 .conversation(conversation)
@@ -99,7 +113,11 @@ public class ChatServiceImpl implements IChatService {
                 .build();
         assistantMsg = messageRepository.save(assistantMsg);
 
-        return toResponseDTO(assistantMsg);
+        List<PendingActionDTO> pendingDtos = persistProposals(conversation.getUser(), assistantMsg, proposed);
+
+        chatMemoryService.rememberExchange(currentUserId, conversationId, request.message(), aiResponse);
+
+        return toResponseDTO(assistantMsg, pendingDtos);
     }
 
     @Override
@@ -121,7 +139,7 @@ public class ChatServiceImpl implements IChatService {
         List<ChatResponseDTO> messages = messageRepository
                 .findByConversation_IdOrderByCreatedAtAsc(conversationId)
                 .stream()
-                .map(this::toResponseDTO)
+                .map(m -> toResponseDTO(m, loadActionsForMessage(m.getId())))
                 .collect(Collectors.toList());
 
         return new ConversationDTO(
@@ -141,24 +159,25 @@ public class ChatServiceImpl implements IChatService {
         conversationRepository.delete(conversation);
     }
 
-    private String retrieveFinancialContext(UUID userId, String query) {
-        try {
-            var filter = new FilterExpressionBuilder().eq("userId", userId.toString()).build();
-            var results = vectorStore.similaritySearch(
-                    SearchRequest.builder()
-                            .query(query)
-                            .topK(RAG_TOP_K)
-                            .filterExpression(filter)
-                            .build()
-            );
-            if (results.isEmpty()) return "";
-            return results.stream()
-                    .map(doc -> doc.getText())
-                    .collect(Collectors.joining("\n"));
-        } catch (Exception e) {
-            log.warn("No se pudo recuperar contexto financiero para usuario {}: {}", userId, e.getMessage());
-            return "";
-        }
+    private List<PendingActionDTO> persistProposals(UserEntity user, ChatMessageEntity msg,
+                                                    List<PendingActionCollector.Pending> proposed) {
+        if (proposed == null || proposed.isEmpty()) return List.of();
+        return proposed.stream().map(p -> {
+            PendingChatActionEntity entity = PendingChatActionEntity.builder()
+                    .user(user)
+                    .chatMessage(msg)
+                    .type(p.getType())
+                    .summary(p.getSummary())
+                    .payloadJson(writeJson(p.getPayload()))
+                    .build();
+            entity = pendingActionRepository.save(entity);
+            return toActionDTO(entity);
+        }).toList();
+    }
+
+    private List<PendingActionDTO> loadActionsForMessage(UUID messageId) {
+        return pendingActionRepository.findByChatMessage_IdOrderByCreatedAtAsc(messageId)
+                .stream().map(this::toActionDTO).toList();
     }
 
     private List<Message> buildHistory(UUID conversationId, UUID excludeMessageId) {
@@ -173,36 +192,76 @@ public class ChatServiceImpl implements IChatService {
     }
 
     private String buildSystemPrompt(String context) {
-        if (context == null || context.isBlank()) {
-            return """
-                    Eres FinBot, un asesor financiero personal inteligente y empático.
-                    Ayuda al usuario con sus finanzas. Si no tienes datos del usuario disponibles,
-                    sugiere que use el endpoint /api/v1/chat/index para actualizar su información.
-                    Responde siempre en español, de forma clara y directa.
-                    """;
-        }
-        return """
+        String base = """
                 Eres FinBot, un asesor financiero personal inteligente y empático.
-                Tu objetivo es ayudar al usuario a tomar decisiones financieras informadas
-                basándote en sus datos reales que se muestran a continuación.
+                Tu objetivo es ayudar al usuario a tomar decisiones financieras informadas con
+                datos reales y precisos.
 
-                DATOS FINANCIEROS DEL USUARIO:
-                %s
+                HERRAMIENTAS DE LECTURA (datos exactos, no inventes):
+                  • getAccountBalances → saldos por cuenta.
+                  • getNetWorthSummary → patrimonio total (operativo vs ahorro).
+                  • searchTransactions → transacciones con filtros (tipo, fecha, monto, texto).
+                  • getMonthlySummary → ingresos/gastos/ahorro de un mes específico.
+                  • getCategorySpending → gasto en una categoría durante N meses.
+                  • getActiveDebts → deudas activas con saldo y tasa.
+                  • compareDebtPayoffStrategies → snowball vs avalanche dado un extra mensual.
+                  • getActiveWishlist → metas de ahorro activas.
+                  • listUserDocuments / searchUserDocuments → PDFs/textos que subió el usuario.
 
-                Responde siempre en español, de forma clara y directa.
-                Cuando hagas recomendaciones, basa tus respuestas en los datos anteriores.
-                Si el usuario pregunta si puede comprar algo, analiza sus ingresos, gastos,
-                saldo en cuentas y metas de ahorro antes de responder.
-                """.formatted(context);
+                HERRAMIENTAS DE ACCIÓN (proponen, no ejecutan — el usuario confirma):
+                  • proposeExpense → cuando pide registrar un gasto.
+                  • proposeIncome → cuando pide registrar un ingreso.
+                  • proposeTransfer → cuando pide mover plata entre cuentas (incluye 'mover a ahorro').
+
+                Reglas:
+                  • Si la pregunta involucra cantidades/fechas/nombres → llamá tool de lectura. NO inventes.
+                  • Si pide CREAR algo (gasto, ingreso, transferencia) → llamá la tool de acción y avisá
+                    al usuario que va a aparecer un botón para confirmar.
+                  • Si una tool devuelve vacío, decílo explícitamente.
+                  • Cantidades en COP salvo que indique otra moneda.
+                  • Respondé siempre en español, claro y conciso. Sin markdown excesivo.
+                """;
+        if (context != null && !context.isBlank()) {
+            base += "\nCONTEXTO ADICIONAL DEL USUARIO (resumido):\n" + context + "\n";
+        }
+        return base;
     }
 
-    private ChatResponseDTO toResponseDTO(ChatMessageEntity msg) {
+    private String writeJson(Object o) {
+        try { return objectMapper.writeValueAsString(o); }
+        catch (Exception e) { return "{}"; }
+    }
+
+    private Map<String, Object> readJson(String s) {
+        if (s == null || s.isBlank()) return new HashMap<>();
+        try {
+            return objectMapper.readValue(s, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+
+    private PendingActionDTO toActionDTO(PendingChatActionEntity e) {
+        return new PendingActionDTO(
+                e.getId(),
+                e.getType(),
+                e.getSummary(),
+                readJson(e.getPayloadJson()),
+                e.getStatus(),
+                e.getResultMessage(),
+                e.getCreatedAt(),
+                e.getResolvedAt()
+        );
+    }
+
+    private ChatResponseDTO toResponseDTO(ChatMessageEntity msg, List<PendingActionDTO> actions) {
         return new ChatResponseDTO(
                 msg.getId(),
                 msg.getConversation().getId(),
                 msg.getRole(),
                 msg.getContent(),
-                msg.getCreatedAt()
+                msg.getCreatedAt(),
+                actions == null ? List.of() : actions
         );
     }
 }

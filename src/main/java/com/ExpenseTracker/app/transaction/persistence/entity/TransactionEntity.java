@@ -47,7 +47,11 @@ public class TransactionEntity extends SoftDeletableEntity {
     private com.ExpenseTracker.app.account.persistence.entity.AccountEntity account;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "category_id", nullable = false)
+    @JoinColumn(name = "transfer_to_account_id")
+    private com.ExpenseTracker.app.account.persistence.entity.AccountEntity transferToAccount;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "category_id")
     private com.ExpenseTracker.app.category.persistence.entity.CategoryEntity category;
 
 

@@ -21,11 +21,12 @@ public class StorageController {
 
     @PostMapping(value = "/upload", consumes = "multipart/form-data")
     @Operation(summary = "Subir archivo",
-            description = "Sube un archivo a Wasabi S3. El parámetro 'folder' organiza los archivos (ej: avatars, documents).")
+            description = "Sube un archivo a Wasabi S3. Devuelve la key (para guardar) y un URL prefirmado (para preview).")
     public ResponseEntity<Map<String, String>> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "folder", defaultValue = "uploads") String folder) {
-        String url = storageService.upload(file, folder);
-        return ResponseEntity.ok(Map.of("url", url));
+        String key = storageService.upload(file, folder);
+        String url = storageService.presignedUrl(key);
+        return ResponseEntity.ok(Map.of("key", key, "url", url));
     }
 }

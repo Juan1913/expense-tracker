@@ -20,7 +20,7 @@ public class FinancialIndexingService {
     private final JdbcTemplate jdbcTemplate;
 
     @Async
-    @Transactional(readOnly = true)
+    @Transactional
     public void reindexUser(UUID userId) {
         log.info("Re-indexando datos financieros para usuario {}", userId);
         try {

@@ -53,15 +53,96 @@ public class TransactionServiceImpl implements ITransactionService {
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado con id: " + userId));
         AccountEntity account = accountRepository.findByIdAndUser_Id(dto.getAccountId(), userId)
                 .orElseThrow(() -> new NotFoundException("Cuenta no encontrada con id: " + dto.getAccountId()));
-        CategoryEntity category = categoryRepository.findByIdAndUser_Id(dto.getCategoryId(), userId)
-                .orElseThrow(() -> new NotFoundException("Categoría no encontrada con id: " + dto.getCategoryId()));
 
         TransactionEntity entity = transactionMapper.toEntity(dto);
         entity.setUser(user);
         entity.setAccount(account);
-        entity.setCategory(category);
 
+        if (dto.getType() == TransactionType.TRANSFER) {
+            if (dto.getTransferToAccountId() == null) {
+                throw new IllegalArgumentException("La cuenta destino es obligatoria para una transferencia");
+            }
+            if (dto.getTransferToAccountId().equals(dto.getAccountId())) {
+                throw new IllegalArgumentException("La cuenta origen y destino deben ser distintas");
+            }
+            AccountEntity toAccount = accountRepository.findByIdAndUser_Id(dto.getTransferToAccountId(), userId)
+                    .orElseThrow(() -> new NotFoundException("Cuenta destino no encontrada con id: " + dto.getTransferToAccountId()));
+            entity.setTransferToAccount(toAccount);
+            entity.setCategory(null);
+        } else {
+            if (dto.getCategoryId() == null) {
+                throw new IllegalArgumentException("La categoría es obligatoria para ingresos y gastos");
+            }
+            CategoryEntity category = categoryRepository.findByIdAndUser_Id(dto.getCategoryId(), userId)
+                    .orElseThrow(() -> new NotFoundException("Categoría no encontrada con id: " + dto.getCategoryId()));
+            entity.setCategory(category);
+            entity.setTransferToAccount(null);
+        }
+
+        applyEffect(entity);
         return transactionMapper.toDTO(transactionRepository.save(entity));
+    }
+
+    /**
+     * Aplica el movimiento sobre los balances. EXPENSE y TRANSFER (origen)
+     * validan que haya saldo suficiente; si no, lanzan IllegalArgumentException.
+     */
+    private void applyEffect(TransactionEntity t) {
+        BigDecimal amount = t.getAmount();
+        AccountEntity acc = t.getAccount();
+        switch (t.getType()) {
+            case EXPENSE -> {
+                requireSufficientBalance(acc, amount);
+                acc.setBalance(safeBalance(acc).subtract(amount));
+                accountRepository.save(acc);
+            }
+            case INCOME -> {
+                acc.setBalance(safeBalance(acc).add(amount));
+                accountRepository.save(acc);
+            }
+            case TRANSFER -> {
+                AccountEntity to = t.getTransferToAccount();
+                requireSufficientBalance(acc, amount);
+                acc.setBalance(safeBalance(acc).subtract(amount));
+                to.setBalance(safeBalance(to).add(amount));
+                accountRepository.save(acc);
+                accountRepository.save(to);
+            }
+        }
+    }
+
+    private void revertEffect(TransactionEntity t) {
+        BigDecimal amount = t.getAmount();
+        AccountEntity acc = t.getAccount();
+        switch (t.getType()) {
+            case EXPENSE -> {
+                acc.setBalance(safeBalance(acc).add(amount));
+                accountRepository.save(acc);
+            }
+            case INCOME -> {
+                acc.setBalance(safeBalance(acc).subtract(amount));
+                accountRepository.save(acc);
+            }
+            case TRANSFER -> {
+                AccountEntity to = t.getTransferToAccount();
+                acc.setBalance(safeBalance(acc).add(amount));
+                to.setBalance(safeBalance(to).subtract(amount));
+                accountRepository.save(acc);
+                accountRepository.save(to);
+            }
+        }
+    }
+
+    private void requireSufficientBalance(AccountEntity acc, BigDecimal amount) {
+        if (safeBalance(acc).compareTo(amount) < 0) {
+            throw new IllegalArgumentException(
+                    "Saldo insuficiente en \"" + acc.getName() + "\". Disponible: "
+                            + safeBalance(acc) + ", requerido: " + amount + ".");
+        }
+    }
+
+    private static BigDecimal safeBalance(AccountEntity a) {
+        return a.getBalance() == null ? BigDecimal.ZERO : a.getBalance();
     }
 
     @Override
@@ -141,8 +222,9 @@ public class TransactionServiceImpl implements ITransactionService {
             TransactionType t = (TransactionType) row[0];
             BigDecimal sum   = (BigDecimal) row[1];
             long count       = ((Number) row[2]).longValue();
-            if (t == TransactionType.INCOME) { totalIncome = sum;  incomeCount = count; }
-            else                              { totalExpense = sum; expenseCount = count; }
+            // TRANSFER no afecta ingresos ni gastos.
+            if (t == TransactionType.INCOME)       { totalIncome = sum;  incomeCount = count; }
+            else if (t == TransactionType.EXPENSE) { totalExpense = sum; expenseCount = count; }
         }
         return TransactionSummaryDTO.builder()
                 .totalIncome(totalIncome)
@@ -167,20 +249,40 @@ public class TransactionServiceImpl implements ITransactionService {
         TransactionEntity entity = transactionRepository.findByIdAndUser_Id(id, userId)
                 .orElseThrow(() -> new NotFoundException("Transacción no encontrada con id: " + id));
 
+        if (dto.getType() != null && dto.getType() != entity.getType()) {
+            throw new IllegalArgumentException(
+                    "No se puede cambiar el tipo. Eliminá la transacción y creá una nueva.");
+        }
+
+        // Revertimos el efecto del estado anterior antes de aplicar los cambios.
+        revertEffect(entity);
+
         if (dto.getAmount() != null) entity.setAmount(dto.getAmount());
         if (dto.getDate() != null) entity.setDate(dto.getDate());
         if (dto.getDescription() != null) entity.setDescription(dto.getDescription());
-        if (dto.getType() != null) entity.setType(dto.getType());
 
         if (dto.getAccountId() != null) {
             entity.setAccount(accountRepository.findByIdAndUser_Id(dto.getAccountId(), userId)
                     .orElseThrow(() -> new NotFoundException("Cuenta no encontrada con id: " + dto.getAccountId())));
         }
-        if (dto.getCategoryId() != null) {
-            entity.setCategory(categoryRepository.findByIdAndUser_Id(dto.getCategoryId(), userId)
-                    .orElseThrow(() -> new NotFoundException("Categoría no encontrada con id: " + dto.getCategoryId())));
+
+        if (entity.getType() == TransactionType.TRANSFER) {
+            if (dto.getTransferToAccountId() != null) {
+                entity.setTransferToAccount(accountRepository.findByIdAndUser_Id(dto.getTransferToAccountId(), userId)
+                        .orElseThrow(() -> new NotFoundException("Cuenta destino no encontrada con id: " + dto.getTransferToAccountId())));
+            }
+            if (entity.getAccount().getId().equals(entity.getTransferToAccount().getId())) {
+                throw new IllegalArgumentException("La cuenta origen y destino deben ser distintas");
+            }
+            entity.setCategory(null);
+        } else {
+            if (dto.getCategoryId() != null) {
+                entity.setCategory(categoryRepository.findByIdAndUser_Id(dto.getCategoryId(), userId)
+                        .orElseThrow(() -> new NotFoundException("Categoría no encontrada con id: " + dto.getCategoryId())));
+            }
         }
 
+        applyEffect(entity);
         return transactionMapper.toDTO(transactionRepository.save(entity));
     }
 
@@ -188,6 +290,7 @@ public class TransactionServiceImpl implements ITransactionService {
     public void delete(UUID id, UUID userId) {
         TransactionEntity entity = transactionRepository.findByIdAndUser_Id(id, userId)
                 .orElseThrow(() -> new NotFoundException("Transacción no encontrada con id: " + id));
+        revertEffect(entity);
         transactionRepository.delete(entity);
     }
 }

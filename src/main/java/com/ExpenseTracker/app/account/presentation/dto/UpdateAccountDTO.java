@@ -28,4 +28,6 @@ public class UpdateAccountDTO {
 
     @Size(max = 10, message = "La moneda no puede superar 10 caracteres")
     private String currency;
+
+    private Boolean savings;
 }

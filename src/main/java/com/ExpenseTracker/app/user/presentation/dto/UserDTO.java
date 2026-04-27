@@ -17,7 +17,6 @@ public class UserDTO {
     private String email;
     private String role;
     private BigDecimal monthlySavingsGoal;
-    private String profileImageUrl;
     private boolean active;
     private boolean emailVerified;
     private LocalDateTime createdAt;

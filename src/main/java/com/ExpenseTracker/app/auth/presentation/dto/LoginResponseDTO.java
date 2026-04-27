@@ -16,5 +16,4 @@ public class LoginResponseDTO {
     private String email;
     private String username;
     private String role;
-    private String profileImageUrl;
 }

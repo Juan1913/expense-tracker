@@ -4,6 +4,7 @@ import com.ExpenseTracker.util.exception.AlreadyExistsException;
 import com.ExpenseTracker.util.exception.InvalidDataException;
 import com.ExpenseTracker.util.exception.NotFoundException;
 import com.ExpenseTracker.util.exception.NotSaveException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.ai.retry.TransientAiException;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
@@ -21,6 +22,7 @@ import java.util.Collections;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalControllerAdvice {
 
     @ResponseStatus(HttpStatus.NOT_FOUND)
@@ -48,6 +50,17 @@ public class GlobalControllerAdvice {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     @ExceptionHandler(InvalidDataException.class)
     public ErrorResponse handleInvalidData(InvalidDataException ex) {
+        return ErrorResponse.builder()
+                .code(ErrorCatalog.USER_INVALID_DATA.getCode())
+                .status(HttpStatus.BAD_REQUEST)
+                .message(ex.getMessage())
+                .timeStamp(LocalDateTime.now())
+                .build();
+    }
+
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ErrorResponse handleIllegalArgument(IllegalArgumentException ex) {
         return ErrorResponse.builder()
                 .code(ErrorCatalog.USER_INVALID_DATA.getCode())
                 .status(HttpStatus.BAD_REQUEST)
@@ -131,6 +144,7 @@ public class GlobalControllerAdvice {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     @ExceptionHandler(Exception.class)
     public ErrorResponse handleGenericError(Exception ex) {
+        log.error("Unhandled exception: {}", ex.getMessage(), ex);
         return ErrorResponse.builder()
                 .code(ErrorCatalog.GENERIC_ERROR.getCode())
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)

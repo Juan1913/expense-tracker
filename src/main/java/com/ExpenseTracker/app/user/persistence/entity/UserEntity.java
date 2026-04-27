@@ -43,9 +43,6 @@ public class UserEntity extends SoftDeletableEntity {
     @Column(precision = 19, scale = 2)
     private java.math.BigDecimal monthlySavingsGoal;
 
-    @Column(name = "profile_image_url")
-    private String profileImageUrl;
-
     // Default true so existing rows stay active after schema update
     @Builder.Default
     @Column(nullable = false, columnDefinition = "boolean default true")
