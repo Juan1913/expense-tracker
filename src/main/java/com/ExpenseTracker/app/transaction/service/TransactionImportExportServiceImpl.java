@@ -273,8 +273,8 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
                         .amount(getCell(r, colIndex.get("monto"), df))
                         .accountName(getCell(r, colIndex.get("cuenta"), df))
                         .transferToAccountName(getCell(r, colIndex.get("cuenta destino"), df))
-                        .categoryName(getCell(r, colIndex.get("categoría"), df))
-                        .description(getCell(r, colIndex.get("descripción"), df))
+                        .categoryName(getCell(r, colIndex.get("categoria"), df))
+                        .description(getCell(r, colIndex.get("descripcion"), df))
                         .build();
                 out.add(row);
             }
@@ -306,8 +306,8 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
                         .amount(at(cells, colIndex.get("monto")))
                         .accountName(at(cells, colIndex.get("cuenta")))
                         .transferToAccountName(at(cells, colIndex.get("cuenta destino")))
-                        .categoryName(at(cells, colIndex.get("categoría")))
-                        .description(at(cells, colIndex.get("descripción")))
+                        .categoryName(at(cells, colIndex.get("categoria")))
+                        .description(at(cells, colIndex.get("descripcion")))
                         .build();
                 out.add(row);
             }
