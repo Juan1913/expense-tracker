@@ -231,6 +231,7 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
 
         if (dryRun) {
             AccountEntity placeholder = AccountEntity.builder()
+                    .id(UUID.randomUUID())
                     .name(rawName.trim())
                     .bank(rawName.trim())
                     .balance(BigDecimal.ZERO)
@@ -355,7 +356,8 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
                 row.setErrorMessage("Cuenta destino '" + row.getTransferToAccountName() + "' no existe");
                 return;
             }
-            if (dst.getId().equals(src.getId())) {
+            if (java.util.Objects.equals(dst.getId(), src.getId())
+                    || normalize(safe(dst.getName())).equals(normalize(safe(src.getName())))) {
                 row.setValid(false);
                 row.setErrorMessage("Cuenta origen y destino deben ser distintas");
                 return;
