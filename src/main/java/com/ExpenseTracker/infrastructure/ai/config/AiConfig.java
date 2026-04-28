@@ -38,7 +38,7 @@ public class AiConfig {
     @Bean
     public OpenAiChatModel openAiChatModel() {
         OpenAiApi api = OpenAiApi.builder()
-                .baseUrl(chatBaseUrl)
+                .baseUrl(normalizeOpenAiBaseUrl(chatBaseUrl))
                 .apiKey(chatApiKey)
                 .build();
         OpenAiChatOptions options = OpenAiChatOptions.builder()
@@ -54,13 +54,21 @@ public class AiConfig {
     @Bean
     public OpenAiEmbeddingModel openAiEmbeddingModel() {
         OpenAiApi api = OpenAiApi.builder()
-                .baseUrl(embeddingBaseUrl)
+                .baseUrl(normalizeOpenAiBaseUrl(embeddingBaseUrl))
                 .apiKey(embeddingApiKey)
                 .build();
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
                 .model(embeddingModelName)
                 .build();
         return new OpenAiEmbeddingModel(api, MetadataMode.EMBED, options);
+    }
+
+    private static String normalizeOpenAiBaseUrl(String url) {
+        if (url == null) return null;
+        String trimmed = url.trim();
+        while (trimmed.endsWith("/")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        if (trimmed.endsWith("/v1")) trimmed = trimmed.substring(0, trimmed.length() - 3);
+        return trimmed;
     }
 
     @Bean
