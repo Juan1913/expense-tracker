@@ -35,4 +35,12 @@ public class CreateAccountDTO {
     private String currency;
 
     private Boolean savings;
+
+    private Boolean creditCard;
+
+    @DecimalMin(value = "0.0", message = "El cupo no puede ser negativo")
+    private BigDecimal creditLimit;
+
+    @DecimalMin(value = "0.0", message = "La tasa no puede ser negativa")
+    private BigDecimal annualRate;
 }

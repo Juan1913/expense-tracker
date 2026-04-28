@@ -68,22 +68,25 @@ public class FinBotTools {
     }
 
     @Tool(name = "getNetWorthSummary",
-          description = "Patrimonio total: suma de saldos en cuentas operativas vs ahorro. " +
-                        "Úsalo para responder '¿cuánto tengo en total?' o '¿cuánto tengo ahorrado?'")
+          description = "Patrimonio total: suma de saldos en cuentas operativas y de ahorro, menos deuda de tarjetas. " +
+                        "Úsalo para responder '¿cuánto tengo en total?', '¿cuánto tengo ahorrado?' o '¿cuánto debo en tarjetas?'")
     public Map<String, Object> getNetWorthSummary() {
         UUID userId = securityUtils.getCurrentUserId();
         var accounts = accountService.findAllByUser(userId);
         BigDecimal savings = BigDecimal.ZERO;
         BigDecimal operational = BigDecimal.ZERO;
+        BigDecimal cardDebt = BigDecimal.ZERO;
         for (AccountDTO a : accounts) {
             BigDecimal bal = a.getBalance() == null ? BigDecimal.ZERO : a.getBalance();
-            if (a.isSavings()) savings = savings.add(bal);
-            else operational = operational.add(bal);
+            if (a.isCreditCard())   cardDebt = cardDebt.add(bal);
+            else if (a.isSavings()) savings = savings.add(bal);
+            else                    operational = operational.add(bal);
         }
         Map<String, Object> out = new HashMap<>();
-        out.put("totalNetWorth", operational.add(savings));
+        out.put("totalNetWorth", operational.add(savings).subtract(cardDebt));
         out.put("operationalBalance", operational);
         out.put("savingsBalance", savings);
+        out.put("creditCardDebt", cardDebt);
         out.put("accountCount", accounts.size());
         return out;
     }
@@ -218,7 +221,193 @@ public class FinBotTools {
         return out;
     }
 
-    // ─── Wishlist 
+    @Tool(name = "creditCardOverview",
+          description = "Resumen de tarjetas de crédito: saldo actual (deuda), cupo disponible, % de uso y tasa anual. " +
+                        "Úsalo para preguntas tipo '¿cuánto debo en tarjetas?' o '¿cuál tarjeta tiene más cupo libre?'")
+    public Map<String, Object> creditCardOverview() {
+        UUID userId = securityUtils.getCurrentUserId();
+        var accounts = accountService.findAllByUser(userId).stream()
+                .filter(AccountDTO::isCreditCard)
+                .toList();
+        BigDecimal totalDebt = BigDecimal.ZERO;
+        BigDecimal totalLimit = BigDecimal.ZERO;
+        List<Map<String, Object>> cards = new java.util.ArrayList<>();
+        for (AccountDTO a : accounts) {
+            BigDecimal bal = a.getBalance() == null ? BigDecimal.ZERO : a.getBalance();
+            BigDecimal limit = a.getCreditLimit();
+            BigDecimal rate = a.getAnnualRate();
+            totalDebt = totalDebt.add(bal);
+            if (limit != null) totalLimit = totalLimit.add(limit);
+            Map<String, Object> m = new HashMap<>();
+            m.put("name", a.getName());
+            m.put("debt", bal);
+            m.put("creditLimit", limit);
+            m.put("annualRate", rate);
+            if (limit != null && limit.signum() > 0) {
+                m.put("usagePct", bal.multiply(BigDecimal.valueOf(100))
+                        .divide(limit, 2, java.math.RoundingMode.HALF_UP));
+                m.put("availableCredit", limit.subtract(bal).max(BigDecimal.ZERO));
+            }
+            cards.add(m);
+        }
+        Map<String, Object> out = new HashMap<>();
+        out.put("totalDebt", totalDebt);
+        out.put("totalLimit", totalLimit);
+        out.put("cardCount", accounts.size());
+        out.put("cards", cards);
+        return out;
+    }
+
+    @Tool(name = "recommendDebtPayoffPlan",
+          description = "Recomienda una estrategia para liquidar deudas (préstamos + tarjetas) basada en datos reales. " +
+                        "Considera ingresos, gastos y deudas. Devuelve la mejor estrategia, ahorro estimado y plan mensual.")
+    public Map<String, Object> recommendDebtPayoffPlan(
+            @ToolParam(required = false, description = "Monto extra mensual disponible para pagar deudas. Si es null, se calcula como ingresos - gastos del último mes.")
+            String extraMonthlyBudget
+    ) {
+        UUID userId = securityUtils.getCurrentUserId();
+
+        BigDecimal extra = parseDecimal(extraMonthlyBudget);
+        if (extra == null) {
+            YearMonth lastMonth = YearMonth.now().minusMonths(1);
+            LocalDateTime from = lastMonth.atDay(1).atStartOfDay();
+            LocalDateTime to = lastMonth.plusMonths(1).atDay(1).atStartOfDay();
+            TransactionSummaryDTO summary = transactionService.aggregates(
+                    userId, null, null, null, from, to, null, null, null);
+            extra = summary.getNetBalance().max(BigDecimal.ZERO);
+        }
+
+        StrategyComparisonDTO comp = debtService.compareStrategies(userId, extra);
+
+        var creditCards = accountService.findAllByUser(userId).stream()
+                .filter(AccountDTO::isCreditCard)
+                .toList();
+        BigDecimal cardDebt = creditCards.stream()
+                .map(a -> a.getBalance() == null ? BigDecimal.ZERO : a.getBalance())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("availableExtraMonthly", extra);
+        out.put("structuredDebtCount", debtService.findAllByUser(userId, DebtStatus.ACTIVE).size());
+        out.put("creditCardDebt", cardDebt);
+        out.put("creditCardCount", creditCards.size());
+        out.put("recommendedStrategy", comp.getRecommended());
+        out.put("monthsSavedVsMinimumOnly", comp.getMonthsSavedVsMinimum());
+        out.put("interestSavedVsMinimumOnly", comp.getInterestSavedVsMinimum());
+        out.put("minimumOnly", planSummary(comp.getMinimumOnly()));
+        out.put("snowball", planSummary(comp.getSnowball()));
+        out.put("avalanche", planSummary(comp.getAvalanche()));
+        return out;
+    }
+
+    @Tool(name = "simulateRedirectingExpense",
+          description = "Simula liberarte antes de las deudas si redirigís parte de un gasto recurrente al pago. " +
+                        "Compara meses para liquidar y intereses pagados con vs sin el redirect.")
+    public Map<String, Object> simulateRedirectingExpense(
+            @ToolParam(description = "Monto mensual a redirigir hacia las deudas, en COP.")
+            String monthlyAmountToRedirect,
+            @ToolParam(required = false, description = "Categoría desde la que se redirigiría el gasto (sólo informativo, no afecta cálculos).")
+            String fromCategoryName
+    ) {
+        UUID userId = securityUtils.getCurrentUserId();
+        BigDecimal redirect = parseDecimal(monthlyAmountToRedirect);
+        if (redirect == null || redirect.signum() <= 0) {
+            return Map.of("error", "El monto a redirigir debe ser positivo.");
+        }
+
+        StrategyComparisonDTO before = debtService.compareStrategies(userId, BigDecimal.ZERO);
+        StrategyComparisonDTO after = debtService.compareStrategies(userId, redirect);
+
+        int monthsBefore = bestMonths(before);
+        int monthsAfter = bestMonths(after);
+        BigDecimal interestBefore = bestInterest(before);
+        BigDecimal interestAfter = bestInterest(after);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("redirectedAmount", redirect);
+        out.put("fromCategory", fromCategoryName);
+        out.put("monthsToFreedomBefore", monthsBefore);
+        out.put("monthsToFreedomAfter", monthsAfter);
+        out.put("monthsSaved", monthsBefore < 0 || monthsAfter < 0 ? null : Math.max(0, monthsBefore - monthsAfter));
+        out.put("interestPaidBefore", interestBefore);
+        out.put("interestPaidAfter", interestAfter);
+        out.put("interestSaved", interestBefore.subtract(interestAfter).max(BigDecimal.ZERO));
+        return out;
+    }
+
+    @Tool(name = "analyzeProspectiveDebt",
+          description = "Analiza una deuda hipotética (préstamo nuevo) antes de aceptarla: cuota mensual, total a pagar, intereses totales " +
+                        "y porcentaje de tu ingreso mensual que representaría. Útil para decidir si tomar un crédito.")
+    public Map<String, Object> analyzeProspectiveDebt(
+            @ToolParam(description = "Monto del préstamo en COP.")
+            String principal,
+            @ToolParam(description = "Tasa anual efectiva en porcentaje. Ej: 24.5 para 24.5% E.A.")
+            String annualRatePct,
+            @ToolParam(description = "Plazo en meses.")
+            int termMonths
+    ) {
+        BigDecimal p = parseDecimal(principal);
+        BigDecimal annualPct = parseDecimal(annualRatePct);
+        if (p == null || p.signum() <= 0 || annualPct == null || termMonths <= 0) {
+            return Map.of("error", "Parámetros inválidos. Necesito principal positivo, tasa anual % y plazo en meses > 0.");
+        }
+        double annualRate = annualPct.doubleValue() / 100.0;
+        double monthlyRate = Math.pow(1 + annualRate, 1.0 / 12.0) - 1;
+        double pv = p.doubleValue();
+        double monthlyPayment;
+        if (monthlyRate == 0) {
+            monthlyPayment = pv / termMonths;
+        } else {
+            monthlyPayment = pv * monthlyRate / (1 - Math.pow(1 + monthlyRate, -termMonths));
+        }
+        double totalPaid = monthlyPayment * termMonths;
+        double totalInterest = totalPaid - pv;
+
+        UUID userId = securityUtils.getCurrentUserId();
+        YearMonth lastMonth = YearMonth.now().minusMonths(1);
+        TransactionSummaryDTO summary = transactionService.aggregates(
+                userId, null, null, null,
+                lastMonth.atDay(1).atStartOfDay(),
+                lastMonth.plusMonths(1).atDay(1).atStartOfDay(),
+                null, null, null);
+        BigDecimal monthlyIncome = summary.getTotalIncome();
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("principal", p);
+        out.put("annualRatePct", annualPct);
+        out.put("termMonths", termMonths);
+        out.put("monthlyPayment", BigDecimal.valueOf(monthlyPayment).setScale(2, java.math.RoundingMode.HALF_UP));
+        out.put("totalPaid", BigDecimal.valueOf(totalPaid).setScale(2, java.math.RoundingMode.HALF_UP));
+        out.put("totalInterest", BigDecimal.valueOf(totalInterest).setScale(2, java.math.RoundingMode.HALF_UP));
+        out.put("interestPctOfPrincipal", BigDecimal.valueOf(totalInterest / pv * 100).setScale(2, java.math.RoundingMode.HALF_UP));
+        if (monthlyIncome != null && monthlyIncome.signum() > 0) {
+            out.put("monthlyIncomeReference", monthlyIncome);
+            out.put("paymentPctOfMonthlyIncome",
+                    BigDecimal.valueOf(monthlyPayment / monthlyIncome.doubleValue() * 100)
+                            .setScale(2, java.math.RoundingMode.HALF_UP));
+        }
+        return out;
+    }
+
+    private int bestMonths(StrategyComparisonDTO comp) {
+        int sb = comp.getSnowball() != null ? comp.getSnowball().getMonthsToFreedom() : -1;
+        int av = comp.getAvalanche() != null ? comp.getAvalanche().getMonthsToFreedom() : -1;
+        if (sb < 0 && av < 0) return -1;
+        if (sb < 0) return av;
+        if (av < 0) return sb;
+        return Math.min(sb, av);
+    }
+
+    private BigDecimal bestInterest(StrategyComparisonDTO comp) {
+        BigDecimal sb = comp.getSnowball() != null ? comp.getSnowball().getTotalInterest() : null;
+        BigDecimal av = comp.getAvalanche() != null ? comp.getAvalanche().getTotalInterest() : null;
+        if (sb == null && av == null) return BigDecimal.ZERO;
+        if (sb == null) return av;
+        if (av == null) return sb;
+        return sb.min(av);
+    }
+
+    // ─── Wishlist
 
     @Tool(name = "getActiveWishlist",
           description = "Lista las metas de ahorro / wishlist activas del usuario con monto objetivo, ahorrado y % de progreso. " +

@@ -30,4 +30,10 @@ public class UpdateAccountDTO {
     private String currency;
 
     private Boolean savings;
+
+    private Boolean creditCard;
+
+    private BigDecimal creditLimit;
+
+    private BigDecimal annualRate;
 }

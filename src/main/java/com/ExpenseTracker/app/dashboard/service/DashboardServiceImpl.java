@@ -90,16 +90,17 @@ public class DashboardServiceImpl implements IDashboardService {
         BigDecimal totalExpenses = expenseFuture.join();
         BigDecimal totalSavings = totalIncome.subtract(totalExpenses);
 
-        // Patrimonio neto = Σ saldos de cuentas activas; separado por flag isSavings.
         List<AccountEntity> accounts = accountsFuture.join();
         BigDecimal totalInSavings = BigDecimal.ZERO;
         BigDecimal totalOperational = BigDecimal.ZERO;
+        BigDecimal totalCreditCardDebt = BigDecimal.ZERO;
         for (AccountEntity a : accounts) {
             BigDecimal bal = a.getBalance() == null ? BigDecimal.ZERO : a.getBalance();
-            if (a.isSavings()) totalInSavings = totalInSavings.add(bal);
-            else               totalOperational = totalOperational.add(bal);
+            if (a.isCreditCard())   totalCreditCardDebt = totalCreditCardDebt.add(bal);
+            else if (a.isSavings()) totalInSavings = totalInSavings.add(bal);
+            else                    totalOperational = totalOperational.add(bal);
         }
-        BigDecimal totalNetWorth = totalOperational.add(totalInSavings);
+        BigDecimal totalNetWorth = totalOperational.add(totalInSavings).subtract(totalCreditCardDebt);
 
         List<TransactionEntity> transactions = monthlyFuture.join();
 
@@ -111,6 +112,7 @@ public class DashboardServiceImpl implements IDashboardService {
                 .totalNetWorth(totalNetWorth)
                 .totalInSavingsAccounts(totalInSavings)
                 .totalOperational(totalOperational)
+                .totalCreditCardDebt(totalCreditCardDebt)
                 .monthlySummaries(buildMonthlySummaries(transactions))
                 .expensesByCategory(buildCategoryExpenses(categoryFuture.join(), totalExpenses))
                 .budgetComparisons(buildBudgetComparisons(budgetFuture.join(), currentMonthCategoryFuture.join()))

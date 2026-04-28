@@ -20,6 +20,7 @@ public class DashboardSummaryDTO {
     private BigDecimal totalNetWorth;
     private BigDecimal totalInSavingsAccounts;
     private BigDecimal totalOperational;
+    private BigDecimal totalCreditCardDebt;
     private List<MonthlySummaryDTO> monthlySummaries;
     private List<CategoryExpenseDTO> expensesByCategory;
     private List<BudgetComparisonDTO> budgetComparisons;

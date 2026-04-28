@@ -206,12 +206,16 @@ public class ChatServiceImpl implements IChatService {
 
                 HERRAMIENTAS DE LECTURA:
                   • getAccountBalances → saldos por cuenta.
-                  • getNetWorthSummary → patrimonio total (operativo vs ahorro).
+                  • getNetWorthSummary → patrimonio total (operativo + ahorro − deuda de tarjetas).
+                  • creditCardOverview → tarjetas: deuda, cupo, % uso, tasa.
                   • searchTransactions → transacciones con filtros (tipo, fecha, monto, texto).
                   • getMonthlySummary → ingresos/gastos/ahorro neto de un mes específico.
                   • getCategorySpending → gasto en una categoría durante N meses.
-                  • getActiveDebts → deudas activas con saldo y tasa.
+                  • getActiveDebts → deudas estructuradas (préstamos) activas.
                   • compareDebtPayoffStrategies → snowball vs avalanche dado un extra mensual.
+                  • recommendDebtPayoffPlan → recomienda estrategia con base en cashflow real.
+                  • simulateRedirectingExpense → "si redirigís X de una categoría a deudas, ¿cuántos meses te ahorrás?".
+                  • analyzeProspectiveDebt → analiza un préstamo nuevo antes de aceptarlo (cuota, intereses, % del ingreso).
                   • getActiveWishlist → metas de ahorro activas.
                   • listUserDocuments / searchUserDocuments → PDFs/textos que subió el usuario.
 

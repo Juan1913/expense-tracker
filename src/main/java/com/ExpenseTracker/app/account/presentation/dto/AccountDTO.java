@@ -20,5 +20,8 @@ public class AccountDTO {
     private BigDecimal balance;
     private String currency;
     private boolean savings;
+    private boolean creditCard;
+    private BigDecimal creditLimit;
+    private BigDecimal annualRate;
     private LocalDateTime createdAt;
 }

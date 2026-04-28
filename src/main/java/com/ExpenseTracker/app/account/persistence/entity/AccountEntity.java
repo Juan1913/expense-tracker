@@ -50,6 +50,16 @@ public class AccountEntity extends SoftDeletableEntity {
     @ColumnDefault("false")
     private boolean savings;
 
+    @Column(name = "is_credit_card", nullable = false)
+    @ColumnDefault("false")
+    private boolean creditCard;
+
+    @Column(name = "credit_limit", precision = 19, scale = 2)
+    private BigDecimal creditLimit;
+
+    @Column(name = "annual_rate", precision = 8, scale = 6)
+    private BigDecimal annualRate;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

@@ -83,28 +83,22 @@ public class TransactionServiceImpl implements ITransactionService {
         return transactionMapper.toDTO(transactionRepository.save(entity));
     }
 
-    /**
-     * Aplica el movimiento sobre los balances. EXPENSE y TRANSFER (origen)
-     * validan que haya saldo suficiente; si no, lanzan IllegalArgumentException.
-     */
     private void applyEffect(TransactionEntity t) {
         BigDecimal amount = t.getAmount();
         AccountEntity acc = t.getAccount();
         switch (t.getType()) {
             case EXPENSE -> {
-                requireSufficientBalance(acc, amount);
-                acc.setBalance(safeBalance(acc).subtract(amount));
+                applyOutflow(acc, amount);
                 accountRepository.save(acc);
             }
             case INCOME -> {
-                acc.setBalance(safeBalance(acc).add(amount));
+                applyInflow(acc, amount);
                 accountRepository.save(acc);
             }
             case TRANSFER -> {
                 AccountEntity to = t.getTransferToAccount();
-                requireSufficientBalance(acc, amount);
-                acc.setBalance(safeBalance(acc).subtract(amount));
-                to.setBalance(safeBalance(to).add(amount));
+                applyOutflow(acc, amount);
+                applyInflow(to, amount);
                 accountRepository.save(acc);
                 accountRepository.save(to);
             }
@@ -116,29 +110,58 @@ public class TransactionServiceImpl implements ITransactionService {
         AccountEntity acc = t.getAccount();
         switch (t.getType()) {
             case EXPENSE -> {
-                acc.setBalance(safeBalance(acc).add(amount));
+                revertOutflow(acc, amount);
                 accountRepository.save(acc);
             }
             case INCOME -> {
-                acc.setBalance(safeBalance(acc).subtract(amount));
+                revertInflow(acc, amount);
                 accountRepository.save(acc);
             }
             case TRANSFER -> {
                 AccountEntity to = t.getTransferToAccount();
-                acc.setBalance(safeBalance(acc).add(amount));
-                to.setBalance(safeBalance(to).subtract(amount));
+                revertOutflow(acc, amount);
+                revertInflow(to, amount);
                 accountRepository.save(acc);
                 accountRepository.save(to);
             }
         }
     }
 
-    private void requireSufficientBalance(AccountEntity acc, BigDecimal amount) {
-        if (safeBalance(acc).compareTo(amount) < 0) {
-            throw new IllegalArgumentException(
-                    "Saldo insuficiente en \"" + acc.getName() + "\". Disponible: "
-                            + safeBalance(acc) + ", requerido: " + amount + ".");
+    private void applyOutflow(AccountEntity acc, BigDecimal amount) {
+        BigDecimal current = safeBalance(acc);
+        if (acc.isCreditCard()) {
+            BigDecimal next = current.add(amount);
+            BigDecimal limit = acc.getCreditLimit();
+            if (limit != null && next.compareTo(limit) > 0) {
+                BigDecimal available = limit.subtract(current).max(BigDecimal.ZERO);
+                throw new IllegalArgumentException(
+                        "Excede el cupo de la tarjeta \"" + acc.getName() + "\". Disponible: "
+                                + available + ", requerido: " + amount + ".");
+            }
+            acc.setBalance(next);
+        } else {
+            if (current.compareTo(amount) < 0) {
+                throw new IllegalArgumentException(
+                        "Saldo insuficiente en \"" + acc.getName() + "\". Disponible: "
+                                + current + ", requerido: " + amount + ".");
+            }
+            acc.setBalance(current.subtract(amount));
         }
+    }
+
+    private void applyInflow(AccountEntity acc, BigDecimal amount) {
+        BigDecimal current = safeBalance(acc);
+        acc.setBalance(acc.isCreditCard() ? current.subtract(amount) : current.add(amount));
+    }
+
+    private void revertOutflow(AccountEntity acc, BigDecimal amount) {
+        BigDecimal current = safeBalance(acc);
+        acc.setBalance(acc.isCreditCard() ? current.subtract(amount) : current.add(amount));
+    }
+
+    private void revertInflow(AccountEntity acc, BigDecimal amount) {
+        BigDecimal current = safeBalance(acc);
+        acc.setBalance(acc.isCreditCard() ? current.add(amount) : current.subtract(amount));
     }
 
     private static BigDecimal safeBalance(AccountEntity a) {
