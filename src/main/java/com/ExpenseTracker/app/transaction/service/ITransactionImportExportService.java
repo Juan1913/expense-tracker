@@ -18,4 +18,6 @@ public interface ITransactionImportExportService {
             String search);
 
     TransactionImportResultDTO importFromFile(UUID userId, MultipartFile file, boolean dryRun, boolean autoCreateAccounts);
+
+    TransactionImportResultDTO importFromExtract(UUID userId, MultipartFile file, UUID accountId, boolean dryRun);
 }

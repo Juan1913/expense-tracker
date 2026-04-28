@@ -8,18 +8,26 @@ import com.ExpenseTracker.app.transaction.persistence.entity.TransactionEntity;
 import com.ExpenseTracker.app.transaction.persistence.repository.TransactionEntityRepository;
 import com.ExpenseTracker.app.transaction.persistence.specification.TransactionSpecs;
 import com.ExpenseTracker.app.transaction.presentation.dto.CreateTransactionDTO;
+import com.ExpenseTracker.app.transaction.presentation.dto.ExtractedTransactionDTO;
 import com.ExpenseTracker.app.transaction.presentation.dto.TransactionImportResultDTO;
 import com.ExpenseTracker.app.transaction.presentation.dto.TransactionImportRowDTO;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.UserEntityRepository;
 import com.ExpenseTracker.util.enums.TransactionType;
 import com.ExpenseTracker.util.exception.NotFoundException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.io.RandomAccessReadBuffer;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
@@ -55,6 +63,10 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
     private final CategoryEntityRepository categoryRepository;
     private final UserEntityRepository userRepository;
     private final ITransactionService transactionService;
+    private final ChatClient chatClient;
+    private final ObjectMapper objectMapper;
+
+    private static final int MAX_EXTRACT_CHARS = 12000;
 
     private static final String[] HEADERS = {
             "Fecha", "Tipo", "Monto", "Cuenta", "Cuenta destino", "Categoría", "Descripción"
@@ -572,5 +584,153 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
 
     private static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
+    }
+
+    @Override
+    public TransactionImportResultDTO importFromExtract(UUID userId, MultipartFile file, UUID accountId, boolean dryRun) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
+
+        AccountEntity account = accountRepository.findByIdAndUser_Id(accountId, userId)
+                .orElseThrow(() -> new NotFoundException("Cuenta no encontrada"));
+
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Archivo vacío");
+        }
+
+        String text;
+        try {
+            text = extractTextFromFile(file);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("No se pudo leer el archivo: " + e.getMessage());
+        }
+
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("El archivo no tiene texto legible (¿PDF escaneado sin OCR?)");
+        }
+
+        if (text.length() > MAX_EXTRACT_CHARS) {
+            text = text.substring(0, MAX_EXTRACT_CHARS);
+        }
+
+        List<ExtractedTransactionDTO> extracted = callLlmExtraction(text);
+
+        Map<String, AccountEntity> accountByName = indexAccounts(userId);
+
+        List<TransactionImportRowDTO> rows = new ArrayList<>();
+        int idx = 1;
+        for (ExtractedTransactionDTO e : extracted) {
+            TransactionImportRowDTO row = TransactionImportRowDTO.builder()
+                    .row(idx++)
+                    .date(e.date())
+                    .type(normalizeAiType(e.type()))
+                    .amount(e.amount())
+                    .accountName(account.getName())
+                    .transferToAccountName(null)
+                    .categoryName(e.suggestedCategory())
+                    .description(e.description())
+                    .build();
+            validateRow(row, accountByName);
+            rows.add(row);
+        }
+
+        int valid = (int) rows.stream().filter(TransactionImportRowDTO::isValid).count();
+        int created = 0;
+
+        if (!dryRun && valid > 0) {
+            for (TransactionImportRowDTO row : rows) {
+                if (!row.isValid()) continue;
+                try {
+                    CreateTransactionDTO dto = buildCreateDTO(userId, user, row, accountByName);
+                    transactionService.create(dto, userId);
+                    row.setCreated(true);
+                    created++;
+                } catch (Exception ex) {
+                    row.setValid(false);
+                    row.setCreated(false);
+                    row.setErrorMessage("Error al guardar: " + ex.getMessage());
+                }
+            }
+        }
+
+        return TransactionImportResultDTO.builder()
+                .totalRows(rows.size())
+                .validRows(valid)
+                .invalidRows(rows.size() - valid)
+                .createdRows(created)
+                .dryRun(dryRun)
+                .rows(rows)
+                .build();
+    }
+
+    private String extractTextFromFile(MultipartFile file) throws Exception {
+        String name = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase(Locale.ROOT) : "";
+        String contentType = file.getContentType() != null ? file.getContentType() : "";
+        if (name.endsWith(".pdf") || "application/pdf".equals(contentType)) {
+            try (PDDocument doc = Loader.loadPDF(new RandomAccessReadBuffer(file.getInputStream()))) {
+                return new PDFTextStripper().getText(doc);
+            }
+        }
+        return new String(file.getBytes(), StandardCharsets.UTF_8);
+    }
+
+    private List<ExtractedTransactionDTO> callLlmExtraction(String text) {
+        String currentYear = String.valueOf(java.time.Year.now().getValue());
+        String userPrompt = """
+                Analizá el siguiente texto extraído de un extracto bancario y extraé TODAS las transacciones individuales.
+
+                Reglas estrictas:
+                  • Sólo movimientos reales (compras, abonos, transferencias entrantes/salientes, retiros, depósitos).
+                  • Ignorá totales, saldos finales, encabezados de página, comisiones agrupadas, líneas que no son movimientos.
+                  • Si una línea es ambigua, omitila.
+                  • Tipo: INCOME para abonos/créditos/depósitos. EXPENSE para cargos/débitos/compras/retiros.
+                  • Las transferencias salientes hacia otra cuenta del usuario se modelan como EXPENSE (luego el usuario las puede revisar).
+                  • Monto siempre positivo, sin signos ni símbolos. Punto como separador decimal si hay centavos.
+                  • Si el extracto no muestra el año, usá %s.
+                  • Sugerí una categoría corta en español según la descripción (ej. Restaurantes, Mercado, Transporte, Servicios, Salud, Salario, Trabajo extra, Compras, Retiro efectivo, Comisión bancaria).
+                  • Devolvé ÚNICAMENTE el JSON solicitado, sin explicaciones ni texto adicional.
+
+                Texto del extracto:
+                ---
+                %s
+                ---
+                """.formatted(currentYear, text);
+
+        try {
+            return chatClient.prompt()
+                    .user(userPrompt)
+                    .call()
+                    .entity(new org.springframework.core.ParameterizedTypeReference<List<ExtractedTransactionDTO>>() {});
+        } catch (Exception primary) {
+            log.warn("Structured output falló, intentando parseo manual del JSON: {}", primary.getMessage());
+            String raw = chatClient.prompt()
+                    .user(userPrompt + "\n\nDevolvé un array JSON con objetos {date, type, amount, description, suggestedCategory}.")
+                    .call()
+                    .content();
+            return parseJsonList(raw);
+        }
+    }
+
+    private List<ExtractedTransactionDTO> parseJsonList(String raw) {
+        if (raw == null) return List.of();
+        String trimmed = raw.trim();
+        int start = trimmed.indexOf('[');
+        int end = trimmed.lastIndexOf(']');
+        if (start < 0 || end < 0 || end <= start) return List.of();
+        String json = trimmed.substring(start, end + 1);
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<ExtractedTransactionDTO>>() {});
+        } catch (Exception e) {
+            log.warn("No se pudo parsear el JSON del LLM: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static String normalizeAiType(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim().toUpperCase(Locale.ROOT);
+        if (s.startsWith("INC") || s.equals("INGRESO") || s.equals("CREDITO") || s.equals("ABONO")) return "INCOME";
+        if (s.startsWith("EXP") || s.equals("GASTO") || s.equals("DEBITO") || s.equals("CARGO") || s.equals("RETIRO")) return "EXPENSE";
+        return raw;
     }
 }

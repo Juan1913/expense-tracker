@@ -159,4 +159,14 @@ public class TransactionController {
         return ResponseEntity.ok(importExportService.importFromFile(
                 securityUtils.getCurrentUserId(), file, dryRun, autoCreateAccounts));
     }
+
+    @PostMapping(value = "/import-extract", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Importar extracto bancario (PDF/CSV/TXT) con extracción vía LLM. accountId obligatorio.")
+    public ResponseEntity<TransactionImportResultDTO> importExtract(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam UUID accountId,
+            @RequestParam(defaultValue = "true") boolean dryRun) {
+        return ResponseEntity.ok(importExportService.importFromExtract(
+                securityUtils.getCurrentUserId(), file, accountId, dryRun));
+    }
 }
