@@ -29,4 +29,6 @@ public class DebtDTO {
     private DebtStatus status;
     private LocalDateTime createdAt;
     private UUID userId;
+    private String qualityBadge;
+    private String qualityHint;
 }

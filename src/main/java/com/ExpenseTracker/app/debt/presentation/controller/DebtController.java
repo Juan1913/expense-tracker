@@ -1,7 +1,10 @@
 package com.ExpenseTracker.app.debt.presentation.controller;
 
 import com.ExpenseTracker.app.debt.presentation.dto.CreateDebtDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.CreateDebtPaymentDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.DebtDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.DebtPaymentDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.DebtSummaryDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.StrategyComparisonDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.UpdateDebtDTO;
 import com.ExpenseTracker.app.debt.service.IDebtService;
@@ -68,5 +71,25 @@ public class DebtController {
     public ResponseEntity<StrategyComparisonDTO> compareStrategies(
             @RequestParam(required = false) BigDecimal extraBudget) {
         return ResponseEntity.ok(debtService.compareStrategies(securityUtils.getCurrentUserId(), extraBudget));
+    }
+
+    @PostMapping("/{id}/payments")
+    @Operation(summary = "Registrar un pago: calcula intereses acumulados, separa capital/interés y actualiza el saldo")
+    public ResponseEntity<DebtPaymentDTO> recordPayment(@PathVariable UUID id,
+                                                        @Valid @RequestBody CreateDebtPaymentDTO dto) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(debtService.recordPayment(id, dto, securityUtils.getCurrentUserId()));
+    }
+
+    @GetMapping("/{id}/payments")
+    @Operation(summary = "Lista todos los pagos registrados para una deuda")
+    public ResponseEntity<List<DebtPaymentDTO>> listPayments(@PathVariable UUID id) {
+        return ResponseEntity.ok(debtService.listPayments(id, securityUtils.getCurrentUserId()));
+    }
+
+    @GetMapping("/{id}/summary")
+    @Operation(summary = "Resumen de la deuda: totales pagados, próximo interés estimado, calidad de la deuda")
+    public ResponseEntity<DebtSummaryDTO> summary(@PathVariable UUID id) {
+        return ResponseEntity.ok(debtService.summary(id, securityUtils.getCurrentUserId()));
     }
 }

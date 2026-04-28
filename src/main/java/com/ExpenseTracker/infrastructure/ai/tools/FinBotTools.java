@@ -198,6 +198,45 @@ public class FinBotTools {
                 .toList();
     }
 
+    @Tool(name = "analyzeDebtQuality",
+          description = "Analiza una deuda específica del usuario: tasa, % capital pagado, intereses pagados, intereses estimados del próximo mes, calidad ('GOOD' / 'MEDIUM' / 'BAD' según tasa) y razonamiento. " +
+                        "Úsalo para preguntas como '¿es buena o mala mi deuda X?', '¿cuánto pago de intereses?', '¿cuánto he pagado de capital?'")
+    public Map<String, Object> analyzeDebtQuality(
+            @ToolParam(description = "Nombre o parte del nombre de la deuda a analizar (ej. 'libre inversión', 'auto', 'hipoteca').")
+            String debtName
+    ) {
+        UUID userId = securityUtils.getCurrentUserId();
+        var debts = debtService.findAllByUser(userId, null);
+        if (debts.isEmpty()) {
+            return Map.of("error", "No tenés deudas estructuradas registradas.");
+        }
+        String norm = debtName == null ? "" : debtName.toLowerCase().trim();
+        var match = debts.stream()
+                .filter(d -> norm.isEmpty() || d.getName().toLowerCase().contains(norm)
+                        || (d.getCreditor() != null && d.getCreditor().toLowerCase().contains(norm)))
+                .findFirst()
+                .orElse(debts.get(0));
+
+        var summary = debtService.summary(match.getId(), userId);
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("debtName", match.getName());
+        out.put("creditor", match.getCreditor());
+        out.put("annualRatePct", match.getAnnualRate() != null
+                ? match.getAnnualRate().multiply(java.math.BigDecimal.valueOf(100)).setScale(2, java.math.RoundingMode.HALF_UP)
+                : null);
+        out.put("currentBalance", match.getCurrentBalance());
+        out.put("principal", match.getPrincipal());
+        out.put("totalCapitalPaid", summary.getTotalCapitalPaid());
+        out.put("totalInterestPaid", summary.getTotalInterestPaid());
+        out.put("capitalProgressPct", summary.getCapitalProgressPercentage());
+        out.put("nextMonthInterestEstimate", summary.getNextMonthInterestEstimate());
+        out.put("paymentsCount", summary.getPaymentsCount());
+        out.put("qualityBadge", summary.getQualityBadge());
+        out.put("qualityHint", summary.getQualityHint());
+        return out;
+    }
+
     @Tool(name = "compareDebtPayoffStrategies",
           description = "Compara las tres estrategias de pago de deudas (solo mínimos, snowball, avalanche) " +
                         "asumiendo que el usuario aporta un monto extra mensual sobre los mínimos. " +

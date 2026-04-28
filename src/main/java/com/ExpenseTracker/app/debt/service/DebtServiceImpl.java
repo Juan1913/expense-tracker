@@ -1,12 +1,22 @@
 package com.ExpenseTracker.app.debt.service;
 
+import com.ExpenseTracker.app.account.persistence.entity.AccountEntity;
+import com.ExpenseTracker.app.account.persistence.repository.AccountEntityRepository;
+import com.ExpenseTracker.app.category.persistence.entity.CategoryEntity;
+import com.ExpenseTracker.app.category.persistence.repository.CategoryEntityRepository;
 import com.ExpenseTracker.app.debt.mapper.DebtMapper;
 import com.ExpenseTracker.app.debt.persistence.entity.DebtEntity;
+import com.ExpenseTracker.app.debt.persistence.entity.DebtPaymentEntity;
 import com.ExpenseTracker.app.debt.persistence.repository.DebtEntityRepository;
+import com.ExpenseTracker.app.debt.persistence.repository.DebtPaymentRepository;
 import com.ExpenseTracker.app.debt.presentation.dto.*;
+import com.ExpenseTracker.app.transaction.presentation.dto.CreateTransactionDTO;
+import com.ExpenseTracker.app.transaction.presentation.dto.TransactionDTO;
+import com.ExpenseTracker.app.transaction.service.ITransactionService;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.UserEntityRepository;
 import com.ExpenseTracker.util.enums.DebtStatus;
+import com.ExpenseTracker.util.enums.TransactionType;
 import com.ExpenseTracker.util.exception.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 @Service
@@ -21,11 +33,15 @@ import java.util.*;
 @Transactional
 public class DebtServiceImpl implements IDebtService {
 
-    private static final int MAX_MONTHS = 600; // 50 años: tope para evitar bucles cuando min < intereses
+    private static final int MAX_MONTHS = 600;
     private static final RoundingMode RM = RoundingMode.HALF_UP;
 
     private final DebtEntityRepository debtRepository;
+    private final DebtPaymentRepository debtPaymentRepository;
     private final UserEntityRepository userRepository;
+    private final AccountEntityRepository accountRepository;
+    private final CategoryEntityRepository categoryRepository;
+    private final ITransactionService transactionService;
     private final DebtMapper debtMapper;
 
     // ─── CRUD ────────────────────────────────────────────────────────────────
@@ -295,6 +311,164 @@ public class DebtServiceImpl implements IDebtService {
     }
 
     /** Snapshot mutable de una deuda, sólo para la simulación. */
+    @Override
+    public DebtPaymentDTO recordPayment(UUID debtId, CreateDebtPaymentDTO dto, UUID userId) {
+        DebtEntity debt = debtRepository.findByIdAndUser_Id(debtId, userId)
+                .orElseThrow(() -> new NotFoundException("Deuda no encontrada"));
+        if (debt.getStatus() == DebtStatus.PAID_OFF) {
+            throw new IllegalArgumentException("Esta deuda ya está saldada");
+        }
+        AccountEntity account = accountRepository.findByIdAndUser_Id(dto.getAccountId(), userId)
+                .orElseThrow(() -> new NotFoundException("Cuenta no encontrada"));
+
+        BigDecimal payment = dto.getAmount();
+        if (payment == null || payment.signum() <= 0) {
+            throw new IllegalArgumentException("El monto debe ser positivo");
+        }
+
+        LocalDate paymentDate = dto.getPaymentDate() != null ? dto.getPaymentDate() : LocalDate.now();
+        BigDecimal balance = debt.getCurrentBalance() == null ? BigDecimal.ZERO : debt.getCurrentBalance();
+
+        LocalDate accrualFrom = debtPaymentRepository.findByDebt_IdOrderByPaymentDateDesc(debtId)
+                .stream().findFirst()
+                .map(DebtPaymentEntity::getPaymentDate)
+                .orElseGet(() -> debt.getStartDate() != null
+                        ? debt.getStartDate()
+                        : debt.getCreatedAt().toLocalDate());
+
+        long daysSince = Math.max(0, ChronoUnit.DAYS.between(accrualFrom, paymentDate));
+        BigDecimal monthlyRate = monthlyRate(debt.getAnnualRate());
+        BigDecimal interestAccrued = balance
+                .multiply(monthlyRate)
+                .multiply(BigDecimal.valueOf(daysSince))
+                .divide(BigDecimal.valueOf(30), 2, RM);
+
+        BigDecimal interestPart = payment.min(interestAccrued).max(BigDecimal.ZERO);
+        BigDecimal capitalPart = payment.subtract(interestPart);
+        BigDecimal newBalance = balance.add(interestAccrued).subtract(payment).max(BigDecimal.ZERO);
+
+        debt.setCurrentBalance(newBalance);
+        if (newBalance.signum() == 0) {
+            debt.setStatus(DebtStatus.PAID_OFF);
+        }
+        debtRepository.save(debt);
+
+        UUID transactionId = null;
+        try {
+            CategoryEntity category = ensureDebtPaymentCategory(debt.getUser(), userId);
+            CreateTransactionDTO txDto = CreateTransactionDTO.builder()
+                    .amount(payment)
+                    .date(paymentDate.atStartOfDay())
+                    .description("Pago: " + debt.getName())
+                    .type(TransactionType.EXPENSE)
+                    .accountId(account.getId())
+                    .categoryId(category.getId())
+                    .build();
+            TransactionDTO tx = transactionService.create(txDto, userId);
+            transactionId = tx.getId();
+        } catch (Exception e) {
+            throw new IllegalArgumentException("No se pudo registrar el pago: " + e.getMessage());
+        }
+
+        DebtPaymentEntity record = DebtPaymentEntity.builder()
+                .debt(debt)
+                .user(debt.getUser())
+                .amountTotal(payment)
+                .amountInterest(interestPart)
+                .amountCapital(capitalPart)
+                .balanceAfter(newBalance)
+                .paymentDate(paymentDate)
+                .account(account)
+                .transactionId(transactionId)
+                .build();
+        DebtPaymentEntity saved = debtPaymentRepository.save(record);
+        return toPaymentDTO(saved);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<DebtPaymentDTO> listPayments(UUID debtId, UUID userId) {
+        debtRepository.findByIdAndUser_Id(debtId, userId)
+                .orElseThrow(() -> new NotFoundException("Deuda no encontrada"));
+        return debtPaymentRepository.findByDebt_IdOrderByPaymentDateDesc(debtId).stream()
+                .map(this::toPaymentDTO)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DebtSummaryDTO summary(UUID debtId, UUID userId) {
+        DebtEntity debt = debtRepository.findByIdAndUser_Id(debtId, userId)
+                .orElseThrow(() -> new NotFoundException("Deuda no encontrada"));
+
+        BigDecimal capital = debtPaymentRepository.sumCapitalByDebt(debtId);
+        BigDecimal interest = debtPaymentRepository.sumInterestByDebt(debtId);
+        int count = debtPaymentRepository.findByDebt_IdOrderByPaymentDateDesc(debtId).size();
+
+        BigDecimal monthlyRate = monthlyRate(debt.getAnnualRate());
+        BigDecimal balance = debt.getCurrentBalance() == null ? BigDecimal.ZERO : debt.getCurrentBalance();
+        BigDecimal nextMonthInterest = balance.multiply(monthlyRate).setScale(2, RM);
+
+        BigDecimal pct = BigDecimal.ZERO;
+        if (debt.getPrincipal() != null && debt.getPrincipal().signum() > 0) {
+            pct = capital
+                    .multiply(BigDecimal.valueOf(100))
+                    .divide(debt.getPrincipal(), 2, RM);
+        }
+
+        String[] q = qualityFor(debt.getAnnualRate());
+
+        return DebtSummaryDTO.builder()
+                .debtId(debtId)
+                .totalCapitalPaid(capital)
+                .totalInterestPaid(interest)
+                .currentBalance(balance)
+                .nextMonthInterestEstimate(nextMonthInterest)
+                .capitalProgressPercentage(pct)
+                .paymentsCount(count)
+                .qualityBadge(q[0])
+                .qualityHint(q[1])
+                .build();
+    }
+
+    public static String[] qualityFor(BigDecimal annualRate) {
+        if (annualRate == null) return new String[]{"MEDIUM", "Sin tasa registrada — no se puede clasificar."};
+        double rate = annualRate.doubleValue();
+        if (rate < 0.15) return new String[]{"GOOD", "Tasa baja, deuda razonable. Útil si financia algo que gana valor."};
+        if (rate < 0.25) return new String[]{"MEDIUM", "Tasa media. Pagala antes de tomar más deuda nueva."};
+        return new String[]{"BAD", "Tasa alta — deuda cara. Priorizá liquidarla cuanto antes."};
+    }
+
+    private CategoryEntity ensureDebtPaymentCategory(UserEntity user, UUID userId) {
+        return categoryRepository.findByUser_IdAndType(userId, "EXPENSE").stream()
+                .filter(c -> "Pago de deudas".equalsIgnoreCase(c.getName()))
+                .findFirst()
+                .orElseGet(() -> {
+                    CategoryEntity cat = CategoryEntity.builder()
+                            .name("Pago de deudas")
+                            .type("EXPENSE")
+                            .user(user)
+                            .build();
+                    return categoryRepository.save(cat);
+                });
+    }
+
+    private DebtPaymentDTO toPaymentDTO(DebtPaymentEntity p) {
+        return DebtPaymentDTO.builder()
+                .id(p.getId())
+                .debtId(p.getDebt() != null ? p.getDebt().getId() : null)
+                .amountTotal(p.getAmountTotal())
+                .amountInterest(p.getAmountInterest())
+                .amountCapital(p.getAmountCapital())
+                .balanceAfter(p.getBalanceAfter())
+                .paymentDate(p.getPaymentDate())
+                .accountId(p.getAccount() != null ? p.getAccount().getId() : null)
+                .accountName(p.getAccount() != null ? p.getAccount().getName() : null)
+                .transactionId(p.getTransactionId())
+                .createdAt(p.getCreatedAt())
+                .build();
+    }
+
     private static final class SimDebt {
         final UUID id;
         final String name;

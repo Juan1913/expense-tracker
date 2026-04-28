@@ -1,7 +1,10 @@
 package com.ExpenseTracker.app.debt.service;
 
 import com.ExpenseTracker.app.debt.presentation.dto.CreateDebtDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.CreateDebtPaymentDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.DebtDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.DebtPaymentDTO;
+import com.ExpenseTracker.app.debt.presentation.dto.DebtSummaryDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.StrategyComparisonDTO;
 import com.ExpenseTracker.app.debt.presentation.dto.UpdateDebtDTO;
 import com.ExpenseTracker.util.enums.DebtStatus;
@@ -22,10 +25,11 @@ public interface IDebtService {
 
     void delete(UUID id, UUID userId);
 
-    /**
-     * Compara las tres estrategias clásicas (mínimo, snowball, avalanche)
-     * para el portafolio de deudas activas del usuario, dado un presupuesto
-     * mensual fijo de pago. Si extraBudget es null, se usa Σ(min) sin extra.
-     */
     StrategyComparisonDTO compareStrategies(UUID userId, BigDecimal extraBudget);
+
+    DebtPaymentDTO recordPayment(UUID debtId, CreateDebtPaymentDTO dto, UUID userId);
+
+    List<DebtPaymentDTO> listPayments(UUID debtId, UUID userId);
+
+    DebtSummaryDTO summary(UUID debtId, UUID userId);
 }

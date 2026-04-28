@@ -18,6 +18,8 @@ public interface DebtMapper {
     @Mapping(source = "user.id", target = "userId")
     @Mapping(target = "monthlyRate", ignore = true)
     @Mapping(target = "progressPercentage", ignore = true)
+    @Mapping(target = "qualityBadge", ignore = true)
+    @Mapping(target = "qualityHint", ignore = true)
     DebtDTO toDTO(DebtEntity entity);
 
     @AfterMapping
@@ -46,6 +48,10 @@ public interface DebtMapper {
         } else {
             dto.setProgressPercentage(BigDecimal.ZERO);
         }
+
+        String[] q = com.ExpenseTracker.app.debt.service.DebtServiceImpl.qualityFor(entity.getAnnualRate());
+        dto.setQualityBadge(q[0]);
+        dto.setQualityHint(q[1]);
     }
 
     @Mapping(target = "id", ignore = true)
