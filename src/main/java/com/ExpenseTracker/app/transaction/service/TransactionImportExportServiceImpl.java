@@ -147,7 +147,6 @@ public class TransactionImportExportServiceImpl implements ITransactionImportExp
     }
 
     @Override
-    @Transactional
     public TransactionImportResultDTO importFromFile(UUID userId, MultipartFile file, boolean dryRun, boolean autoCreateAccounts) {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
