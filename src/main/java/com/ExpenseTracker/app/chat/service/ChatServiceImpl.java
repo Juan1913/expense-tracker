@@ -221,9 +221,9 @@ public class ChatServiceImpl implements IChatService {
                   • proposeTransfer → si pide mover plata entre cuentas (incluye 'mover a ahorro').
 
                 EJEMPLOS de cuándo llamar herramientas:
-                  • "¿puedo comprarme un computador?" → getNetWorthSummary + getActiveDebts +
-                    getMonthlySummary del mes actual. Analizá saldo disponible, deudas y ritmo
-                    de ahorro antes de opinar.
+                  • "¿cómo está mi salud financiera?" o "¿puedo darme un gusto?" →
+                    getNetWorthSummary + getActiveDebts + getMonthlySummary del mes actual.
+                    Analizá saldo, deudas y ritmo de ahorro antes de opinar.
                   • "¿cuánta plata tengo?" → getNetWorthSummary.
                   • "¿en qué gasto más?" → searchTransactions con type=EXPENSE del mes en curso.
                   • "¿gasté mucho en restaurantes?" → getCategorySpending("restaurantes", 1).
