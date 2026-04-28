@@ -16,13 +16,19 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
-    private static final long SETUP_TOKEN_EXPIRATION = 15 * 60 * 1000L; // 15 min
+    private static final long SETUP_TOKEN_EXPIRATION = 15 * 60 * 1000L;
 
     @Value("${app.jwt.secret}")
     private String secretKey;
 
-    @Value("${app.jwt.expiration}")
-    private long expiration;
+    @Value("${app.jwt.access-expiration:86400000}")
+    private long accessExpiration;
+
+    @Value("${app.jwt.refresh-expiration:2592000000}")
+    private long refreshExpiration;
+
+    public long getAccessExpirationMs() { return accessExpiration; }
+    public long getRefreshExpirationMs() { return refreshExpiration; }
 
     public String generateToken(UUID userId, String email, String role) {
         return Jwts.builder()
@@ -30,7 +36,7 @@ public class JwtService {
                 .claim("email", email)
                 .claim("role", role)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + expiration))
+                .setExpiration(new Date(System.currentTimeMillis() + accessExpiration))
                 .signWith(signingKey(), SignatureAlgorithm.HS256)
                 .compact();
     }

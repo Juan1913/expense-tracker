@@ -7,6 +7,7 @@ import com.ExpenseTracker.app.auth.presentation.dto.ResetPasswordDTO;
 import com.ExpenseTracker.app.auth.presentation.dto.SetupProfileDTO;
 import com.ExpenseTracker.app.user.persistence.entity.EmailVerificationToken;
 import com.ExpenseTracker.app.user.persistence.entity.PasswordResetToken;
+import com.ExpenseTracker.app.user.persistence.entity.RefreshTokenEntity;
 import com.ExpenseTracker.app.user.persistence.entity.UserEntity;
 import com.ExpenseTracker.app.user.persistence.repository.EmailVerificationTokenRepository;
 import com.ExpenseTracker.app.user.persistence.repository.PasswordResetTokenRepository;
@@ -15,10 +16,15 @@ import com.ExpenseTracker.app.user.presentation.dto.CreateUserDTO;
 import com.ExpenseTracker.app.user.presentation.dto.UserDTO;
 import com.ExpenseTracker.app.user.service.IUserService;
 import com.ExpenseTracker.infrastructure.email.EmailService;
+import com.ExpenseTracker.infrastructure.security.AuthCookieService;
+import com.ExpenseTracker.infrastructure.security.AuthRateLimiter;
 import com.ExpenseTracker.infrastructure.security.JwtService;
+import com.ExpenseTracker.infrastructure.security.RefreshTokenService;
 import com.ExpenseTracker.util.exception.NotFoundException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +36,7 @@ import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -49,6 +56,9 @@ public class AuthController {
     private final PasswordResetTokenRepository resetTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
+    private final AuthCookieService cookieService;
+    private final AuthRateLimiter rateLimiter;
     private final EmailService emailService;
 
     @Value("${app.frontend.url}")
@@ -56,33 +66,71 @@ public class AuthController {
 
     @PostMapping("/register")
     @Operation(summary = "Registrar nuevo usuario")
-    public ResponseEntity<UserDTO> register(@Valid @RequestBody CreateUserDTO dto) {
+    public ResponseEntity<UserDTO> register(@Valid @RequestBody CreateUserDTO dto, HttpServletRequest request) {
+        ensureRateLimit(request, "register");
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUser(dto));
     }
 
     @PostMapping("/login")
     @Operation(summary = "Iniciar sesión")
-    public ResponseEntity<LoginResponseDTO> login(@Valid @RequestBody LoginRequestDTO dto) {
+    public ResponseEntity<LoginResponseDTO> login(@Valid @RequestBody LoginRequestDTO dto,
+                                                  HttpServletRequest request,
+                                                  HttpServletResponse response) {
+        ensureRateLimit(request, "login");
+
         UserEntity user = userRepository.findByEmail(dto.getEmail())
                 .orElseThrow(() -> new NotFoundException("Credenciales inválidas"));
 
-        if (!user.isActive()) {
-            throw new DisabledException("Cuenta desactivada");
-        }
+        if (!user.isActive()) throw new DisabledException("Cuenta desactivada");
 
         if (user.getPassword() == null || !passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
             throw new BadCredentialsException("Credenciales inválidas");
         }
 
-        String token = jwtService.generateToken(user.getId(), user.getEmail(), user.getRole());
+        issueAuthCookies(user, response);
 
         return ResponseEntity.ok(LoginResponseDTO.builder()
-                .token(token)
                 .userId(user.getId())
                 .email(user.getEmail())
                 .username(user.getUsername())
                 .role(user.getRole())
                 .build());
+    }
+
+    @PostMapping("/refresh")
+    @Operation(summary = "Renueva el access token usando el refresh token (cookie HttpOnly)")
+    public ResponseEntity<LoginResponseDTO> refresh(HttpServletRequest request, HttpServletResponse response) {
+        String raw = cookieService.readRefreshToken(request).orElse(null);
+        if (raw == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No hay sesión activa");
+        }
+        RefreshTokenEntity token = refreshTokenService.consume(raw)
+                .orElseThrow(() -> {
+                    cookieService.clearAuthCookies(response);
+                    return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token inválido o expirado");
+                });
+
+        UserEntity user = token.getUser();
+        if (!user.isActive()) {
+            cookieService.clearAuthCookies(response);
+            throw new DisabledException("Cuenta desactivada");
+        }
+        issueAuthCookies(user, response);
+
+        return ResponseEntity.ok(LoginResponseDTO.builder()
+                .userId(user.getId())
+                .email(user.getEmail())
+                .username(user.getUsername())
+                .role(user.getRole())
+                .build());
+    }
+
+    @PostMapping("/logout")
+    @Operation(summary = "Cerrar sesión: revoca refresh token y limpia cookies")
+    public ResponseEntity<Map<String, String>> logout(HttpServletRequest request, HttpServletResponse response) {
+        cookieService.readRefreshToken(request).ifPresent(refreshTokenService::consume);
+        cookieService.clearAuthCookies(response);
+        return ResponseEntity.ok(Map.of("message", "Sesión cerrada"));
     }
 
     @GetMapping("/verify")
@@ -108,11 +156,11 @@ public class AuthController {
     @PostMapping("/setup-profile")
     @Operation(summary = "Configurar perfil tras verificar email")
     @Transactional
-    public ResponseEntity<LoginResponseDTO> setupProfile(@Valid @RequestBody SetupProfileDTO dto) {
+    public ResponseEntity<LoginResponseDTO> setupProfile(@Valid @RequestBody SetupProfileDTO dto,
+                                                         HttpServletResponse response) {
         if (jwtService.isTokenExpired(dto.getSetupToken())) {
             throw new BadCredentialsException("El token de configuración ha expirado");
         }
-
         if (!jwtService.isSetupToken(dto.getSetupToken())) {
             throw new BadCredentialsException("Token inválido");
         }
@@ -121,7 +169,6 @@ public class AuthController {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("Usuario no encontrado"));
 
-        // Mark verification token as used
         tokenRepository.findByTokenAndUsedFalse(dto.getSetupToken()).ifPresent(t -> {
             t.setUsed(true);
             tokenRepository.save(t);
@@ -133,10 +180,9 @@ public class AuthController {
         user.setEmailVerified(true);
         userRepository.save(user);
 
-        String loginToken = jwtService.generateToken(user.getId(), user.getEmail(), user.getRole());
+        issueAuthCookies(user, response);
 
         return ResponseEntity.ok(LoginResponseDTO.builder()
-                .token(loginToken)
                 .userId(user.getId())
                 .email(user.getEmail())
                 .username(user.getUsername())
@@ -147,8 +193,9 @@ public class AuthController {
     @PostMapping("/forgot-password")
     @Operation(summary = "Solicitar correo de recuperación de contraseña")
     @Transactional
-    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordDTO dto) {
-        // Respuesta genérica para no filtrar si el correo existe o no.
+    public ResponseEntity<Map<String, String>> forgotPassword(@Valid @RequestBody ForgotPasswordDTO dto,
+                                                              HttpServletRequest request) {
+        ensureRateLimit(request, "forgot-password");
         Optional<UserEntity> maybeUser = userRepository.findByEmail(dto.getEmail());
         maybeUser.ifPresent(user -> {
             String rawToken = UUID.randomUUID().toString();
@@ -173,7 +220,9 @@ public class AuthController {
     @PostMapping("/reset-password")
     @Operation(summary = "Restablecer contraseña con token recibido por correo")
     @Transactional
-    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordDTO dto) {
+    public ResponseEntity<Map<String, String>> resetPassword(@Valid @RequestBody ResetPasswordDTO dto,
+                                                             HttpServletRequest request) {
+        ensureRateLimit(request, "reset-password");
         PasswordResetToken token = resetTokenRepository.findByTokenAndUsedFalse(dto.getToken())
                 .orElseThrow(() -> new BadCredentialsException("Token inválido o ya utilizado"));
 
@@ -188,6 +237,22 @@ public class AuthController {
         token.setUsed(true);
         resetTokenRepository.save(token);
 
+        refreshTokenService.revokeAllForUser(user.getId());
+
         return ResponseEntity.ok(Map.of("message", "Contraseña actualizada correctamente"));
+    }
+
+    private void issueAuthCookies(UserEntity user, HttpServletResponse response) {
+        String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), user.getRole());
+        String refreshToken = refreshTokenService.issue(user);
+        cookieService.writeAccessCookie(response, accessToken, jwtService.getAccessExpirationMs());
+        cookieService.writeRefreshCookie(response, refreshToken, jwtService.getRefreshExpirationMs());
+    }
+
+    private void ensureRateLimit(HttpServletRequest request, String action) {
+        if (!rateLimiter.tryAcquire(request, action)) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Demasiados intentos. Esperá un minuto e intentá de nuevo.");
+        }
     }
 }
