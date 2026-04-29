@@ -50,7 +50,7 @@ public class ChatServiceImpl implements IChatService {
     private final UserEntityRepository userRepository;
     private final ObjectMapper objectMapper;
 
-    private static final int MAX_HISTORY_MESSAGES = 20;
+    private static final int MAX_HISTORY_MESSAGES = 10;
 
     @Override
     public ConversationDTO createConversation(UUID userId, String firstMessage) {
@@ -102,10 +102,9 @@ public class ChatServiceImpl implements IChatService {
                     .call()
                     .content();
         } catch (Exception e) {
-            log.warn("Error invocando al LLM (probablemente tool malformada por el modelo): {}", e.getMessage());
+            log.warn("Error invocando al LLM: {}", e.getMessage());
             actionCollector.drain();
-            aiResponse = "Tuve un problema procesando tu pregunta. ¿Podés reformularla o intentar de nuevo? "
-                    + "Si pedías un cálculo de préstamo, asegurate de incluir monto, tasa anual % y plazo en meses.";
+            aiResponse = friendlyErrorMessage(e);
         }
         List<PendingActionCollector.Pending> proposed = actionCollector.drain();
 
@@ -198,77 +197,55 @@ public class ChatServiceImpl implements IChatService {
 
     private String buildSystemPrompt(String context) {
         String base = """
-                Eres FinBot, asesor financiero personal del usuario. TIENES ACCESO COMPLETO
-                a sus cuentas, transacciones, deudas, presupuestos y metas a través de las
-                herramientas listadas abajo. NUNCA digas "no tengo acceso a tus cuentas" —
-                sí lo tienes. Si necesitas un dato, invocá la herramienta correspondiente.
+                Eres FinBot, asesor financiero personal. Tenés acceso completo a las cuentas,
+                transacciones, deudas y metas del usuario vía las herramientas. Nunca digas
+                "no tengo acceso" — sí lo tenés.
 
-                REGLA #0 — ALCANCE (estricta): SOLO respondés sobre las finanzas personales
-                del usuario, su uso de esta app y conceptos financieros generales (interés,
-                ahorro, presupuesto, inversión básica, impuestos, crédito, etc.). Si te
-                preguntan sobre algo NO financiero (cosmología, política, deportes, código,
-                recetas, salud, geografía, historia, programación, etc.), respondé amable
-                pero firme: "Solo puedo ayudarte con tus finanzas. ¿Hay algo de tu plata
-                que quieras revisar?" No improvises ni sigas el tema fuera de finanzas
-                aunque insistan.
+                REGLAS:
+                1. ALCANCE: solo respondés sobre finanzas del usuario, uso de la app y
+                   conceptos financieros básicos. Para temas no financieros respondé:
+                   "Solo puedo ayudarte con tus finanzas. ¿Hay algo de tu plata que quieras
+                   revisar?" — no sigas el tema aunque insistan.
+                2. DATOS REALES: para preguntas con cifras del usuario invocá la tool antes
+                   de responder. No inventes. Para conceptos generales o dudas de la app,
+                   respondé directo sin tools.
+                3. CONVERSACIÓN: recordá lo hablado en este chat. Para follow-ups ("¿y los
+                   gastos?") seguí el hilo sin re-consultar lo ya consultado.
+                4. Si una tool devuelve vacío, decilo. Cantidades en COP. Español claro y conciso.
+                   Sin markdown excesivo.
 
-                REGLA #1 — DATOS REALES: Para preguntas sobre dinero del usuario (saldos,
-                gastos, ingresos, deudas, ahorro, comparaciones temporales, capacidad de
-                compra) DEBES invocar PRIMERO la herramienta correspondiente. Está prohibido
-                inventar cifras. Si la pregunta no necesita datos (educación financiera
-                genérica, dudas sobre cómo usar la app), respondé directamente sin invocar
-                tools.
-
-                REGLA #2 — CONVERSACIÓN: Recordá lo que conversamos antes en este chat.
-                Si el usuario pregunta "¿y los gastos?" después de hablar de ingresos,
-                continuá ese hilo sin volver a preguntar contexto que ya tenés. Si el
-                usuario hace seguimiento sobre datos que ya consultaste recientemente,
-                podés usar lo que ya sabés sin volver a llamar la misma tool, salvo que
-                hayan pasado horas o el usuario pida actualizar.
-
-                HERRAMIENTAS DE LECTURA:
-                  • getAccountBalances → saldos por cuenta.
-                  • getNetWorthSummary → patrimonio total (operativo + ahorro − deuda de tarjetas).
-                  • creditCardOverview → tarjetas: deuda, cupo, % uso, tasa.
-                  • searchTransactions → transacciones con filtros (tipo, fecha, monto, texto).
-                  • getMonthlySummary → ingresos/gastos/ahorro neto de un mes específico.
-                  • getCategorySpending → gasto en una categoría durante N meses.
-                  • getActiveDebts → deudas estructuradas (préstamos) activas.
-                  • analyzeDebtQuality → analiza una deuda específica (capital pagado, intereses, calidad GOOD/MEDIUM/BAD).
-                  • compareDebtPayoffStrategies → snowball vs avalanche dado un extra mensual.
-                  • recommendDebtPayoffPlan → recomienda estrategia con base en cashflow real.
-                  • simulateRedirectingExpense → "si redirigís X de una categoría a deudas, ¿cuántos meses te ahorrás?".
-                  • analyzeProspectiveDebt → analiza un préstamo nuevo antes de aceptarlo (cuota, intereses, % del ingreso).
-                  • getActiveWishlist → metas de ahorro activas.
-                  • listUserDocuments / searchUserDocuments → PDFs/textos que subió el usuario.
-
-                HERRAMIENTAS DE ACCIÓN (proponen, no ejecutan — el usuario confirma con un botón):
-                  • proposeExpense → si pide registrar un gasto.
-                  • proposeIncome → si pide registrar un ingreso.
-                  • proposeTransfer → si pide mover plata entre cuentas (incluye 'mover a ahorro').
-
-                EJEMPLOS de cuándo llamar herramientas:
-                  • "¿cómo está mi salud financiera?" o "¿puedo darme un gusto?" →
-                    getNetWorthSummary + getActiveDebts + getMonthlySummary del mes actual.
-                  • "¿cuánta plata tengo?" → getNetWorthSummary.
-                  • "¿en qué gasto más?" → searchTransactions con type=EXPENSE del mes en curso.
-                  • "¿gasté mucho en restaurantes?" → getCategorySpending("restaurantes", 1).
-                  • "anota que gasté 50k en mercado" → proposeExpense.
-                  • "pasá 200k a ahorro" → proposeTransfer.
-
-                EJEMPLO de scope (cómo rechazar fuera de tema):
-                  Usuario: "explicame el big bang" → "Solo puedo ayudarte con tus finanzas.
-                  ¿Hay algo de tu plata que quieras revisar?"
-
-                Reglas adicionales:
-                  • Si una tool devuelve vacío, decílo explícitamente ("no encontré movimientos…").
-                  • Cantidades en COP salvo que indique otra moneda.
-                  • Respondé siempre en español, claro y conciso. Sin markdown excesivo.
+                Las descripciones de cada tool ya las recibís junto con los esquemas — no
+                las repito acá. Usá la tool que mejor calce con la pregunta.
                 """;
         if (context != null && !context.isBlank()) {
-            base += "\nCONTEXTO ADICIONAL DEL USUARIO (resumido):\n" + context + "\n";
+            base += "\nContexto previo: " + context + "\n";
         }
         return base;
+    }
+
+    private String friendlyErrorMessage(Exception e) {
+        String msg = e.getMessage() == null ? "" : e.getMessage();
+        if (msg.contains("rate_limit_exceeded") || msg.contains("Rate limit") || msg.contains("429")) {
+            String retry = extractRetrySeconds(msg);
+            return "Llegamos al límite de tokens por minuto del modelo. "
+                    + (retry != null ? "Esperá ~" + retry + " segundos" : "Esperá ~30 segundos")
+                    + " e intentá de nuevo. Las preguntas cortas consumen menos cupo.";
+        }
+        if (msg.contains("tool_use_failed") || msg.contains("Failed to call a function")) {
+            return "El modelo se confundió interpretando tu pregunta. ¿Podés ser más específico? "
+                    + "Ej: en vez de 'analiza este préstamo', escribí: 'préstamo de 3M, tasa 24%, 12 meses'.";
+        }
+        if (msg.contains("404") || msg.contains("connection") || msg.contains("timeout")) {
+            return "El servicio de IA no está respondiendo. Esperá un minuto e intentá de nuevo.";
+        }
+        return "Tuve un problema procesando tu pregunta. Intentá reformularla.";
+    }
+
+    private static String extractRetrySeconds(String msg) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("try again in (\\d+(?:\\.\\d+)?)s")
+                .matcher(msg);
+        return m.find() ? String.valueOf((int) Math.ceil(Double.parseDouble(m.group(1)))) : null;
     }
 
     private String writeJson(Object o) {
