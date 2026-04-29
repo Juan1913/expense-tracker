@@ -382,12 +382,13 @@ public class FinBotTools {
             String principal,
             @ToolParam(description = "Tasa anual efectiva en porcentaje. Ej: 24.5 para 24.5% E.A.")
             String annualRatePct,
-            @ToolParam(description = "Plazo en meses.")
-            int termMonths
+            @ToolParam(description = "Plazo en meses, sólo el número.")
+            String termMonths
     ) {
         BigDecimal p = parseDecimal(principal);
         BigDecimal annualPct = parseDecimal(annualRatePct);
-        if (p == null || p.signum() <= 0 || annualPct == null || termMonths <= 0) {
+        int term = parseInt(termMonths);
+        if (p == null || p.signum() <= 0 || annualPct == null || term <= 0) {
             return Map.of("error", "Parámetros inválidos. Necesito principal positivo, tasa anual % y plazo en meses > 0.");
         }
         double annualRate = annualPct.doubleValue() / 100.0;
@@ -395,11 +396,11 @@ public class FinBotTools {
         double pv = p.doubleValue();
         double monthlyPayment;
         if (monthlyRate == 0) {
-            monthlyPayment = pv / termMonths;
+            monthlyPayment = pv / term;
         } else {
-            monthlyPayment = pv * monthlyRate / (1 - Math.pow(1 + monthlyRate, -termMonths));
+            monthlyPayment = pv * monthlyRate / (1 - Math.pow(1 + monthlyRate, -term));
         }
-        double totalPaid = monthlyPayment * termMonths;
+        double totalPaid = monthlyPayment * term;
         double totalInterest = totalPaid - pv;
 
         UUID userId = securityUtils.getCurrentUserId();
@@ -414,7 +415,7 @@ public class FinBotTools {
         Map<String, Object> out = new HashMap<>();
         out.put("principal", p);
         out.put("annualRatePct", annualPct);
-        out.put("termMonths", termMonths);
+        out.put("termMonths", term);
         out.put("monthlyPayment", BigDecimal.valueOf(monthlyPayment).setScale(2, java.math.RoundingMode.HALF_UP));
         out.put("totalPaid", BigDecimal.valueOf(totalPaid).setScale(2, java.math.RoundingMode.HALF_UP));
         out.put("totalInterest", BigDecimal.valueOf(totalInterest).setScale(2, java.math.RoundingMode.HALF_UP));
@@ -662,5 +663,14 @@ public class FinBotTools {
         if (s == null || s.isBlank()) return null;
         try { return new BigDecimal(s); }
         catch (NumberFormatException e) { return null; }
+    }
+
+    private static int parseInt(String s) {
+        if (s == null || s.isBlank()) return 0;
+        try { return Integer.parseInt(s.trim()); }
+        catch (NumberFormatException e) {
+            try { return new BigDecimal(s.trim()).intValue(); }
+            catch (Exception ignored) { return 0; }
+        }
     }
 }

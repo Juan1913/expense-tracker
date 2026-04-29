@@ -101,8 +101,11 @@ public class ChatServiceImpl implements IChatService {
                     .user(request.message())
                     .call()
                     .content();
-        } finally {
-            // garantizamos drain incluso si tira excepción.
+        } catch (Exception e) {
+            log.warn("Error invocando al LLM (probablemente tool malformada por el modelo): {}", e.getMessage());
+            actionCollector.drain();
+            aiResponse = "Tuve un problema procesando tu pregunta. ¿Podés reformularla o intentar de nuevo? "
+                    + "Si pedías un cálculo de préstamo, asegurate de incluir monto, tasa anual % y plazo en meses.";
         }
         List<PendingActionCollector.Pending> proposed = actionCollector.drain();
 
