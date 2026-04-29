@@ -9,15 +9,13 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -34,12 +32,6 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final UserDetailsService userDetailsService;
 
-    /**
-     * Lista CSV de orígenes permitidos para CORS. Acepta URLs exactas
-     * (https://app.dominio.com) y patrones (https://*.dominio.com).
-     * En dev podés usar "*" para permitir todo, pero NO en prod
-     * cuando hay credentials.
-     */
     @Value("${app.cors.allowed-origins:${FRONTEND_URL:http://localhost:5173}}")
     private String allowedOrigins;
 
@@ -54,26 +46,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
-        csrfRepo.setCookiePath("/");
-
-        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
-        csrfHandler.setCsrfRequestAttributeName(null);
-
         return http
-                .csrf(csrf -> csrf
-                        .csrfTokenRepository(csrfRepo)
-                        .csrfTokenRequestHandler(csrfHandler)
-                        .ignoringRequestMatchers(
-                                new AntPathRequestMatcher("/api/v1/auth/login"),
-                                new AntPathRequestMatcher("/api/v1/auth/register"),
-                                new AntPathRequestMatcher("/api/v1/auth/refresh"),
-                                new AntPathRequestMatcher("/api/v1/auth/logout"),
-                                new AntPathRequestMatcher("/api/v1/auth/forgot-password"),
-                                new AntPathRequestMatcher("/api/v1/auth/reset-password"),
-                                new AntPathRequestMatcher("/api/v1/auth/setup-profile")
-                        )
-                )
+                .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth

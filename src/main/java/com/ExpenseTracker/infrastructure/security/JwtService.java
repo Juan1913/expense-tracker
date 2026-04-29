@@ -24,11 +24,7 @@ public class JwtService {
     @Value("${app.jwt.access-expiration:86400000}")
     private long accessExpiration;
 
-    @Value("${app.jwt.refresh-expiration:2592000000}")
-    private long refreshExpiration;
-
     public long getAccessExpirationMs() { return accessExpiration; }
-    public long getRefreshExpirationMs() { return refreshExpiration; }
 
     public String generateToken(UUID userId, String email, String role) {
         return Jwts.builder()

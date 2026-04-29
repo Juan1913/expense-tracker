@@ -21,25 +21,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
-    private final AuthCookieService cookieService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String jwt = cookieService.readAccessToken(request).orElse(null);
-        if (jwt == null) {
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                jwt = authHeader.substring(7);
-            }
-        }
-
-        if (jwt == null) {
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
+        String jwt = authHeader.substring(7);
         try {
             String userId = jwtService.extractUserId(jwt);
             if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
@@ -51,9 +44,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
             }
-        } catch (Exception ignored) {
-            // token inválido/expirado: el endpoint protegido devolverá 401, el front llamará a /refresh.
-        }
+        } catch (Exception ignored) { }
 
         filterChain.doFilter(request, response);
     }
